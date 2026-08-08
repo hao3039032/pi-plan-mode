@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { test } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import { planModeCompleted } from "../src/completion-tool.js";
 import planMode, {

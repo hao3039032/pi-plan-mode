@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
+import { test } from "vitest";
 import {
 	builtinTool,
 	createCustomSelectorHarness,

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
 import { createRpcHarness, createTuiHarness } from "@narumitw/pi-tui-kit/testing";
+import { test } from "vitest";
 import {
 	builtinTool,
 	createMockContext,
@@ -34,14 +34,15 @@ async function waitForOpenCount(
 	count: number,
 	running?: Promise<unknown>,
 ) {
-	for (let turn = 0; tui.openCount < count && turn < 100; turn += 1) {
+	const deadline = Date.now() + 2_000;
+	while (tui.openCount < count && Date.now() < deadline) {
 		if (running) {
 			const settled = await Promise.race([
 				running.then(() => true),
-				new Promise<false>((resolve) => setImmediate(() => resolve(false))),
+				new Promise<false>((resolve) => setTimeout(() => resolve(false), 5)),
 			]);
 			if (settled) break;
-		} else await new Promise<void>((resolve) => setImmediate(resolve));
+		} else await new Promise<void>((resolve) => setTimeout(resolve, 5));
 	}
 	assert.equal(tui.openCount, count, "expected the launch menu to remain interactive");
 }

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { test } from "vitest";
 import {
 	createCustomSelectorHarness,
 	createMockContext,
@@ -299,7 +299,7 @@ test("queued export stops when the ready plan is superseded", async () => {
 });
 
 test("plan export refuses an existing symbolic link", {
-	skip: process.platform === "win32" ? "Windows symlink creation requires privileges" : false,
+	skip: process.platform === "win32",
 }, async () => {
 	await withTempDirectory(async (directory) => {
 		const targetPath = join(directory, "owned.md");
