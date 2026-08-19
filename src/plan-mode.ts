@@ -765,7 +765,6 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		await ui.showPlanLaunchMenu(ctx, {
 			statusText: "Status: Off — normal tools are active.",
 			initialScreen,
-			useTabConfirmShortcut: initialScreen === "main",
 			getSelectedNames: () => snapshotPlanModeSelectedNames(tools, toolSelectionSnapshot()),
 			toolSummary: (selectedNames) =>
 				`When started: ${snapshotPlanModeToolNames(tools, selectedNames, toolSelectionSnapshot()).join(", ")}`,

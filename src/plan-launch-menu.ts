@@ -20,13 +20,6 @@ interface PlanLaunchMenuOptions {
 	start(signal: AbortSignal): void;
 	startWithTools(toolNames: string[], signal: AbortSignal): void;
 	settings(signal: AbortSignal): Promise<boolean>;
-	/** Enable Tab as an additional confirm shortcut on the launch menu. */
-	useTabConfirmShortcut?: boolean;
-}
-
-interface MenuKeybindings {
-	matches(data: string, binding: string): boolean;
-	getKeys(binding: string): readonly string[];
 }
 
 export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLaunchMenuOptions) {
@@ -121,51 +114,9 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 			},
 		},
 	});
-	const launchMenuContext = options.useTabConfirmShortcut ? createTabConfirmContext(ctx) : ctx;
-	await runMenu(launchMenuContext, menu, {
+	await runMenu(ctx, menu, {
 		getState: () => undefined,
 		signal: options.signal,
 		isCurrent: options.isCurrent,
 	});
-}
-
-function createTabConfirmContext(ctx: ExtensionContext): ExtensionContext {
-	const custom = ctx.ui.custom;
-	return {
-		...ctx,
-		ui: {
-			...ctx.ui,
-			custom: (factory: unknown, options: unknown) => {
-				const factoryWrapper = ((
-					tui: unknown,
-					theme: unknown,
-					keybindings: MenuKeybindings,
-					done: (value: unknown) => void,
-				) =>
-					(factory as (...args: unknown[]) => unknown)(
-						tui,
-						theme,
-						createTabAsConfirmBindings(keybindings),
-						done,
-					)) as never;
-				return custom(factoryWrapper, options as never);
-			},
-		},
-	} as ExtensionContext;
-}
-
-function createTabAsConfirmBindings(base: MenuKeybindings): MenuKeybindings {
-	return {
-		matches(data: string, binding: string) {
-			if (binding === "tui.select.confirm") {
-				return data === "\t" || base.matches(data, binding);
-			}
-			return base.matches(data, binding);
-		},
-		getKeys(binding: string): readonly string[] {
-			const keys = base.getKeys(binding);
-			if (binding !== "tui.select.confirm" || keys.includes("tab")) return keys;
-			return ["tab", ...keys];
-		},
-	};
 }

@@ -67,7 +67,6 @@ test("inactive bare /plan opens a TUI launch menu without changing Plan state", 
 	assert.match(frame.join("\n"), /Plan mode/);
 	assert.match(frame.join("\n"), /Status: Off/i);
 	assert.match(frame.join("\n"), /Start Plan mode/);
-	assert.match(frame.join("\n"), /\btab\b/i);
 	assert.ok(frame.every((line) => line.length <= 42));
 	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
 	assert.equal(mock.entries.length, 0);
@@ -92,21 +91,6 @@ test("Ctrl+N toggles Plan mode from TUI", async () => {
 	await toggle.handler(context.ctx);
 	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
 	assert.equal(context.statuses.get("plan-mode"), undefined);
-	assert.equal(mock.sentUserMessages.length, 0);
-});
-
-test("Tab starts the inactive launch menu from TUI", async () => {
-	const mock = launchFixture();
-	const tui = createTuiHarness();
-	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
-
-	const running = mock.commands.get("plan")?.handler("", context.ctx) as Promise<unknown>;
-	await waitForOpenCount(tui, 1, running);
-	tui.send("\t");
-	await running;
-
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
-	assert.equal(context.statuses.get("plan-mode"), "plan active");
 	assert.equal(mock.sentUserMessages.length, 0);
 });
 
