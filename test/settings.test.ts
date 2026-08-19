@@ -16,6 +16,7 @@ import {
 	awaitPlanModeSettingsWrites,
 	configuredImplementationPlanRetention,
 	configuredPlanExportPath,
+	configuredPlanModeToggleShortcut,
 	normalizePlanModeSettings,
 	readPlanModeSettings,
 	updatePlanModeSettings,
@@ -42,6 +43,18 @@ test("Plan-mode settings validate inherit and fixed thinking levels", async () =
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}
+});
+
+test("Plan-mode settings normalize and configure toggle shortcut keys", () => {
+	assert.deepEqual(normalizePlanModeSettings({ toggleShortcut: "Ctrl+Alt+P" }), {
+		thinkingLevel: "inherit",
+		toggleShortcut: "ctrl+alt+p",
+	});
+	assert.equal(normalizePlanModeSettings({ toggleShortcut: "bad+key" }), undefined);
+	assert.equal(normalizePlanModeSettings({ toggleShortcut: 42 }), undefined);
+	const configured = normalizePlanModeSettings({});
+	assert.ok(configured);
+	assert.equal(configuredPlanModeToggleShortcut(configured), undefined);
 });
 
 test("Plan-mode settings normalize default tool names strictly", async () => {

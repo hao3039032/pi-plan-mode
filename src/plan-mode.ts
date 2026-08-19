@@ -50,6 +50,7 @@ import {
 import {
 	awaitPlanModeSettingsWrites,
 	configuredImplementationPlanRetention,
+	configuredPlanModeToggleShortcut,
 	configuredThinkingLevel,
 	type PlanModeSettings,
 	readPlanModeSettings,
@@ -99,6 +100,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	};
 	let state: PlanModeState = { enabled: false, awaitingAction: false };
 	let settings: PlanModeSettings = { thinkingLevel: "inherit" };
+	let toggleShortcut: ReturnType<typeof configuredPlanModeToggleShortcut>;
 	let previousTools: string[] | undefined;
 	let readyPresentationIntent: ReadyPresentationIntent | undefined;
 	let latestCommandContext: ExtensionCommandContext | undefined;
@@ -309,12 +311,15 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		},
 	});
 
-	pi.registerShortcut("ctrl+alt+p", {
-		description: "Toggle Plan mode",
-		handler: (ctx) => {
-			togglePlanMode(ctx);
-		},
-	});
+	const registerPlanModeShortcut = () => {
+		if (!toggleShortcut) return;
+		pi.registerShortcut(toggleShortcut, {
+			description: "Toggle Plan mode",
+			handler: (ctx) => {
+				togglePlanMode(ctx);
+			},
+		});
+	};
 
 	pi.on("session_start", async (event, ctx) => {
 		const generation = ++menuGeneration;
@@ -329,11 +334,17 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		implementationRetention.restore(state.activeImplementation);
 		const loadedSettings = await (dependencies.readSettings?.() ?? readPlanModeSettings());
 		if (generation !== menuGeneration || menuController.signal.aborted) return;
-		if (loadedSettings.kind === "loaded") settings = loadedSettings.settings;
-		else if (loadedSettings.kind === "invalid") {
-			ctx.ui.notify(`pi-plan-mode settings ignored: ${loadedSettings.reason}`, "warning");
+		if (loadedSettings.kind === "loaded") {
+			settings = loadedSettings.settings;
+			toggleShortcut = configuredPlanModeToggleShortcut(loadedSettings.settings);
+		} else {
+			toggleShortcut = undefined;
+			if (loadedSettings.kind === "invalid") {
+				ctx.ui.notify(`pi-plan-mode settings ignored: ${loadedSettings.reason}`, "warning");
+			}
 		}
 		if (loadedSettings.notice) ctx.ui.notify(loadedSettings.notice, "warning");
+		registerPlanModeShortcut();
 		const persistFlagActivation = pi.getFlag("plan") === true && !state.enabled;
 		if (persistFlagActivation) {
 			state = state.savedPlan

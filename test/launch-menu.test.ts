@@ -56,6 +56,15 @@ function launchFixture() {
 	return mock;
 }
 
+function launchFixtureWithSettings(readSettings: () => ReturnType<typeof readPlanModeSettings>) {
+	const mock = createMockPi({
+		activeTools: ["read", "write"],
+		allTools: [builtinTool("read"), builtinTool("write"), extensionTool("custom")],
+	});
+	planMode(mock.pi, { readSettings });
+	return mock;
+}
+
 test("inactive bare /plan opens a TUI launch menu without changing Plan state", async () => {
 	const mock = launchFixture();
 	const tui = createTuiHarness({ width: 42, rows: 18 });
@@ -78,11 +87,24 @@ test("inactive bare /plan opens a TUI launch menu without changing Plan state", 
 	assert.equal(mock.sentUserMessages.length, 0);
 });
 
-test("Ctrl+Alt+P toggles Plan mode from TUI", async () => {
+test("Plan mode has no shortcut by default unless configured", async () => {
 	const mock = launchFixture();
 	const context = createMockContext({ mode: "tui", hasUI: true });
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	const toggle = mock.shortcuts.get("ctrl+alt+p");
-	assert.ok(toggle, "Ctrl+Alt+P shortcut should be registered");
+	assert.equal(toggle, undefined, "no global shortcut should be registered by default");
+});
+
+test("customized plan-mode shortcut from settings toggles Plan mode", async () => {
+	const mock = launchFixtureWithSettings(async () => ({
+		kind: "loaded" as const,
+		settings: { thinkingLevel: "inherit", toggleShortcut: "ctrl+shift+p" },
+	}));
+	const context = createMockContext({ mode: "tui", hasUI: true });
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	const toggle = mock.shortcuts.get("ctrl+shift+p");
+	assert.ok(toggle, "custom shortcut should be registered");
+	assert.equal(mock.shortcuts.has("ctrl+alt+p"), false);
 
 	await toggle.handler(context.ctx);
 	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
@@ -91,7 +113,6 @@ test("Ctrl+Alt+P toggles Plan mode from TUI", async () => {
 	await toggle.handler(context.ctx);
 	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
 	assert.equal(context.statuses.get("plan-mode"), undefined);
-	assert.equal(mock.sentUserMessages.length, 0);
 });
 
 test("the inactive launch menu opens Settings without starting Plan mode", async () => {

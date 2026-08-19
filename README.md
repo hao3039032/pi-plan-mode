@@ -164,7 +164,13 @@ You can also exit directly. Before implementation, direct exit discards the late
 
 ## ⚙️ Settings
 
-Open **Settings** from an inactive `/plan` menu to edit one flat group of four workflow choices: **Plan thinking**, **Plan tools**, **After Implement**, and **Export destination**. You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually; `safeSubcommands` remains JSON-only. The file is optional, is read at session start, and is created only after an explicit Settings save or manual edit.
+Open **Settings** from an inactive `/plan` menu to edit one flat group of five workflow choices: **Plan thinking**, **Plan tools**, **After Implement**, **Export destination**, and **Plan mode shortcut**.
+You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually.
+`safeSubcommands` remains JSON-only.
+You can change the Plan-mode shortcut with `toggleShortcut` as long as the file remains JSON-only and uses a valid key string.
+The file is optional, is read at session start, and is created only after an explicit Settings save or manual edit.
+When omitted, the shortcut is disabled by default.
+A recommended value is `ctrl+alt+p`.
 
 ```json
 {
@@ -175,7 +181,8 @@ Open **Settings** from an inactive `/plan` menu to edit one flat group of four w
   "safeSubcommands": {
     "git": ["status", "log", "rev-parse", "blame"],
     "gh": ["pr view", "pr list", "issue view", "issue list"]
-  }
+  },
+  "toggleShortcut": "ctrl+alt+p"
 }
 ```
 
@@ -198,6 +205,13 @@ Changing this setting applies to the next Implement action only. Each active imp
 `defaultPlanExportPath` controls only exports that omit a path. Omit it—or submit an empty value in Settings—to use `PLAN.md`. The value must be a non-empty string of at most 4,096 characters without terminal control characters or NUL. Relative values are resolved against the current working directory at export time; the Settings detail and every export input preview the concrete resolved destination. An explicit `/plan export <path>` is a one-off override and does not edit Settings. Saving a new destination affects the next export immediately, including export of a currently active implementation.
 
 The existing no-overwrite, cancellation, and atomic Plan-state behavior is unchanged. A failed save rolls the row back to its previous value; a failed or cancelled export preserves the plan and target. Long previews wrap or truncate to the available terminal width without changing the raw path used by the action.
+
+### Toggle shortcut
+
+`toggleShortcut` controls the global Plan-mode keybinding used by the TUI shortcut.
+Omit this setting to keep the shortcut disabled.
+Set `toggleShortcut` to the key string you want, such as `ctrl+alt+p` (recommended) or `ctrl+shift+p`.
+Avoid values that conflict with editor shortcuts.
 
 ### Safe shell subcommands
 
