@@ -168,10 +168,8 @@ Open **Settings** from an inactive `/plan` menu to edit one flat group of five w
 You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually.
 `safeSubcommands` remains JSON-only.
 You can change the Plan-mode shortcut with `toggleShortcut` as long as the file remains JSON-only and uses a valid key string.
-The file is optional, is read at session start, and is created only after an explicit Settings save or manual edit.
+The file is optional, is read at session start and reloaded automatically when changed, and is created only after an explicit Settings save or manual edit.
 When omitted, the shortcut is disabled by default.
-A recommended value is `ctrl+alt+p`.
-
 ```json
 {
   "thinkingLevel": "inherit",
@@ -182,7 +180,7 @@ A recommended value is `ctrl+alt+p`.
     "git": ["status", "log", "rev-parse", "blame"],
     "gh": ["pr view", "pr list", "issue view", "issue list"]
   },
-  "toggleShortcut": "ctrl+alt+p"
+  "toggleShortcut": "<your_key>"
 }
 ```
 
@@ -210,7 +208,7 @@ The existing no-overwrite, cancellation, and atomic Plan-state behavior is uncha
 
 `toggleShortcut` controls the global Plan-mode keybinding used by the TUI shortcut.
 Omit this setting to keep the shortcut disabled.
-Set `toggleShortcut` to the key string you want, such as `ctrl+alt+p` (recommended) or `ctrl+shift+p`.
+Set `toggleShortcut` to the key string you want.
 Avoid values that conflict with editor shortcuts.
 
 ### Safe shell subcommands

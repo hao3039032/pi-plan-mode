@@ -9,6 +9,7 @@ import {
 	configuredPlanExportPath,
 	configuredPlanModeToggleShortcut,
 	IMPLEMENTATION_PLAN_RETENTIONS,
+	normalizeKeyId,
 	PLAN_MODE_THINKING_LEVELS,
 	type PlanModeSettings,
 	type PlanModeSettingsLoadResult,
@@ -177,10 +178,9 @@ export async function showPlanModeSettings(
 				title: "Plan mode shortcut",
 				lines: [
 					`Configured: ${configuredPlanModeToggleShortcut(state.settings) ?? "none"}`,
-					"Use Pi key identifiers such as ctrl+shift+p.",
+					"Use Pi key identifiers.",
 					"Submit an empty value to clear the shortcut.",
 					"When unset, Plan mode has no global shortcut.",
-					"Recommended value: ctrl+alt+p",
 				],
 				placeholder: configuredPlanModeToggleShortcut(state.settings) ?? "",
 				action: "set-shortcut",
@@ -227,7 +227,15 @@ export async function showPlanModeSettings(
 			},
 			"open-shortcut": async () => ({ kind: "to", screen: "shortcut" }),
 			"set-shortcut": async ({ ctx: actionCtx, value, signal }) => {
-				const toggleShortcut = (value?.trim() || null) as PlanModeSettingsPatch["toggleShortcut"];
+				const raw = value?.trim() || null;
+				if (raw && !normalizeKeyId(raw)) {
+					actionCtx.ui.notify(
+						`Invalid key identifier: ${safeTerminalText(raw)}. Use Pi key identifiers like ctrl+alt+p.`,
+						"warning",
+					);
+					return { kind: "stay" as const };
+				}
+				const toggleShortcut = raw as PlanModeSettingsPatch["toggleShortcut"];
 				const result = await savePatch(
 					actionCtx,
 					{ toggleShortcut },

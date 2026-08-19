@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { watch } from "node:fs";
+import { basename, dirname } from "node:path";
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -53,6 +55,7 @@ import {
 	configuredPlanModeToggleShortcut,
 	configuredThinkingLevel,
 	type PlanModeSettings,
+	planModeSettingsPath,
 	readPlanModeSettings,
 } from "./settings.js";
 import { type PlanCompletionSource, type PlanModeState, restorePlanModeState } from "./state.js";
@@ -98,6 +101,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		}
 		return interactiveUiPromise;
 	};
+	const explicitPlanModeSettingsPath = dependencies.settingsPath;
 	let state: PlanModeState = { enabled: false, awaitingAction: false };
 	let settings: PlanModeSettings = { thinkingLevel: "inherit" };
 	let toggleShortcut: ReturnType<typeof configuredPlanModeToggleShortcut>;
@@ -110,6 +114,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	let workflowGeneration = 0;
 	let refreshStateBeforeFirstAgentStart = false;
 	let menuController = new AbortController();
+	let settingsWatch: ReturnType<typeof watch> | undefined;
+	let settingsReloadTimer: ReturnType<typeof setTimeout> | undefined;
 	const implementationRetention = createImplementationRetentionCoordinator();
 	const persistState = () => pi.appendEntry<PlanModeState>(STATE_ENTRY_TYPE, state);
 	const planExports = createPlanExportController({
@@ -310,7 +316,6 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	) => {
 		if (toggleShortcut && toggleShortcut !== nextShortcut) {
 			pi.registerShortcut(toggleShortcut, {
-				description: "Plan mode shortcut cleared",
 				handler: clearPlanModeShortcutHandler,
 			});
 		}
@@ -328,6 +333,76 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		toggleShortcut = nextShortcut;
 	};
 
+	const readPlanModeRuntimeSettings = async () => {
+		return dependencies.readSettings?.() ?? readPlanModeSettings(explicitPlanModeSettingsPath);
+	};
+
+	const applyPlanModeSettings = async (
+		generation: number,
+		ctx: ExtensionContext | undefined,
+		showWarnings: boolean,
+	) => {
+		const loadedSettings = await readPlanModeRuntimeSettings();
+		if (generation !== menuGeneration || menuController.signal.aborted) {
+			return undefined;
+		}
+		if (loadedSettings.kind === "loaded") {
+			settings = loadedSettings.settings;
+		} else {
+			settings = { thinkingLevel: "inherit" };
+		}
+		applyPlanModeShortcut(configuredPlanModeToggleShortcut(settings));
+		if (!ctx || !showWarnings) return loadedSettings;
+		if (loadedSettings.kind === "invalid") {
+			ctx.ui.notify(`pi-plan-mode settings ignored: ${loadedSettings.reason}`, "warning");
+		}
+		if (loadedSettings.notice) {
+			ctx.ui.notify(loadedSettings.notice, "warning");
+		}
+		return loadedSettings;
+	};
+
+	const stopPlanModeSettingsWatch = () => {
+		if (settingsReloadTimer) {
+			clearTimeout(settingsReloadTimer);
+			settingsReloadTimer = undefined;
+		}
+		settingsWatch?.close();
+		settingsWatch = undefined;
+	};
+
+	const schedulePlanModeSettingsReload = (generation: number) => {
+		if (settingsReloadTimer) {
+			clearTimeout(settingsReloadTimer);
+			settingsReloadTimer = undefined;
+		}
+		settingsReloadTimer = setTimeout(() => {
+			settingsReloadTimer = undefined;
+			void applyPlanModeSettings(generation, undefined, false);
+		}, 75);
+	};
+
+	const startPlanModeSettingsWatch = (generation: number) => {
+		stopPlanModeSettingsWatch();
+		if (dependencies.readSettings) return;
+		const pathToWatch = explicitPlanModeSettingsPath ?? planModeSettingsPath();
+		try {
+			const directory = dirname(pathToWatch);
+			const fileName = basename(pathToWatch);
+			const watcher = watch(directory, { persistent: false }, (event, changedFile) => {
+				if (event !== "rename" && event !== "change") return;
+				if (!changedFile || changedFile.toString() !== fileName) return;
+				schedulePlanModeSettingsReload(generation);
+			});
+			watcher.on("error", () => {
+				stopPlanModeSettingsWatch();
+			});
+			settingsWatch = watcher;
+		} catch {
+			stopPlanModeSettingsWatch();
+		}
+	};
+
 	pi.on("session_start", async (event, ctx) => {
 		const generation = ++menuGeneration;
 		refreshStateBeforeFirstAgentStart = event.reason === "new";
@@ -339,18 +414,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		settings = { thinkingLevel: "inherit" };
 		restoreState(ctx);
 		implementationRetention.restore(state.activeImplementation);
-		const loadedSettings = await (dependencies.readSettings?.() ?? readPlanModeSettings());
+		await applyPlanModeSettings(generation, ctx, true);
 		if (generation !== menuGeneration || menuController.signal.aborted) return;
-		if (loadedSettings.kind === "loaded") {
-			settings = loadedSettings.settings;
-			applyPlanModeShortcut(configuredPlanModeToggleShortcut(loadedSettings.settings));
-		} else {
-			applyPlanModeShortcut(undefined);
-			if (loadedSettings.kind === "invalid") {
-				ctx.ui.notify(`pi-plan-mode settings ignored: ${loadedSettings.reason}`, "warning");
-			}
-		}
-		if (loadedSettings.notice) ctx.ui.notify(loadedSettings.notice, "warning");
+		startPlanModeSettingsWatch(generation);
 		const persistFlagActivation = pi.getFlag("plan") === true && !state.enabled;
 		if (persistFlagActivation) {
 			state = state.savedPlan
@@ -400,6 +466,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			restoreTools();
 			restoreThinkingLevel();
 		}
+		stopPlanModeSettingsWatch();
 		clearUi(ctx);
 	});
 

@@ -31,7 +31,6 @@ export const IMPLEMENTATION_PLAN_RETENTIONS = [
 	"clear-after-first-run",
 ] as const;
 export const DEFAULT_PLAN_EXPORT_PATH = "PLAN.md";
-export const RECOMMENDED_PLAN_MODE_TOGGLE_SHORTCUT = "ctrl+alt+p";
 const MODIFIERS = new Set(["ctrl", "shift", "alt", "super"]);
 const BASE_KEYS = new Set([
 	..."abcdefghijklmnopqrstuvwxyz0123456789",
@@ -78,8 +77,6 @@ const BASE_KEYS = new Set([
 	"clear",
 	"home",
 	"end",
-	"pageUp",
-	"pageDown",
 	"pageup",
 	"pagedown",
 	"up",
@@ -210,7 +207,7 @@ function normalizePlanExportPath(value: unknown) {
 	return normalized;
 }
 
-function normalizeKeyId(value: unknown): KeyId | undefined {
+export function normalizeKeyId(value: unknown): KeyId | undefined {
 	if (typeof value !== "string") return undefined;
 	const normalized = value.trim().toLowerCase();
 	const base = [...BASE_KEYS]

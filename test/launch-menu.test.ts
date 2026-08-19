@@ -115,6 +115,24 @@ test("customized plan-mode shortcut from settings toggles Plan mode", async () =
 	assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 
+test("customized plan-mode shortcut from settings supports ctrl+alt+p", async () => {
+	const mock = launchFixtureWithSettings(async () => ({
+		kind: "loaded" as const,
+		settings: { thinkingLevel: "inherit", toggleShortcut: "ctrl+alt+p" },
+	}));
+	const context = createMockContext({ mode: "tui", hasUI: true });
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	const toggle = mock.shortcuts.get("ctrl+alt+p");
+	assert.ok(toggle, "custom shortcut should be registered");
+	toggle.handler(context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
+	assert.equal(context.statuses.get("plan-mode"), "plan active");
+
+	toggle.handler(context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
+	assert.equal(context.statuses.get("plan-mode"), undefined);
+});
+
 test("the inactive launch menu opens Settings without starting Plan mode", async () => {
 	const mock = launchFixture();
 	const tui = createTuiHarness();
