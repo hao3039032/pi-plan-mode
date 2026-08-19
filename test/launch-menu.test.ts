@@ -79,6 +79,22 @@ test("inactive bare /plan opens a TUI launch menu without changing Plan state", 
 	assert.equal(mock.sentUserMessages.length, 0);
 });
 
+test("Ctrl+N toggles Plan mode from TUI", async () => {
+	const mock = launchFixture();
+	const context = createMockContext({ mode: "tui", hasUI: true });
+	const toggle = mock.shortcuts.get("ctrl+n");
+	assert.ok(toggle, "Ctrl+N shortcut should be registered");
+
+	await toggle.handler(context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
+	assert.equal(context.statuses.get("plan-mode"), "plan active");
+
+	await toggle.handler(context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
+	assert.equal(context.statuses.get("plan-mode"), undefined);
+	assert.equal(mock.sentUserMessages.length, 0);
+});
+
 test("Tab starts the inactive launch menu from TUI", async () => {
 	const mock = launchFixture();
 	const tui = createTuiHarness();
