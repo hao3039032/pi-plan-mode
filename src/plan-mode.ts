@@ -101,6 +101,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	let state: PlanModeState = { enabled: false, awaitingAction: false };
 	let settings: PlanModeSettings = { thinkingLevel: "inherit" };
 	let toggleShortcut: ReturnType<typeof configuredPlanModeToggleShortcut>;
+	const clearPlanModeShortcutHandler = () => {};
 	let previousTools: string[] | undefined;
 	let readyPresentationIntent: ReadyPresentationIntent | undefined;
 	let latestCommandContext: ExtensionCommandContext | undefined;
@@ -311,14 +312,27 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		},
 	});
 
-	const registerPlanModeShortcut = () => {
-		if (!toggleShortcut) return;
-		pi.registerShortcut(toggleShortcut, {
+	const applyPlanModeShortcut = (
+		nextShortcut: ReturnType<typeof configuredPlanModeToggleShortcut>,
+	) => {
+		if (toggleShortcut && toggleShortcut !== nextShortcut) {
+			pi.registerShortcut(toggleShortcut, {
+				description: "Plan mode shortcut cleared",
+				handler: clearPlanModeShortcutHandler,
+			});
+		}
+		if (!nextShortcut) {
+			toggleShortcut = undefined;
+			return;
+		}
+		if (toggleShortcut === nextShortcut) return;
+		pi.registerShortcut(nextShortcut, {
 			description: "Toggle Plan mode",
 			handler: (ctx) => {
 				togglePlanMode(ctx);
 			},
 		});
+		toggleShortcut = nextShortcut;
 	};
 
 	pi.on("session_start", async (event, ctx) => {
@@ -336,15 +350,14 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		if (generation !== menuGeneration || menuController.signal.aborted) return;
 		if (loadedSettings.kind === "loaded") {
 			settings = loadedSettings.settings;
-			toggleShortcut = configuredPlanModeToggleShortcut(loadedSettings.settings);
+			applyPlanModeShortcut(configuredPlanModeToggleShortcut(loadedSettings.settings));
 		} else {
-			toggleShortcut = undefined;
+			applyPlanModeShortcut(undefined);
 			if (loadedSettings.kind === "invalid") {
 				ctx.ui.notify(`pi-plan-mode settings ignored: ${loadedSettings.reason}`, "warning");
 			}
 		}
 		if (loadedSettings.notice) ctx.ui.notify(loadedSettings.notice, "warning");
-		registerPlanModeShortcut();
 		const persistFlagActivation = pi.getFlag("plan") === true && !state.enabled;
 		if (persistFlagActivation) {
 			state = state.savedPlan
@@ -853,7 +866,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			isCurrent,
 			settingsPath: dependencies.settingsPath,
 			onSaved: (saved) => {
-				if (isCurrent()) settings = saved;
+				if (!isCurrent()) return;
+				settings = saved;
+				applyPlanModeShortcut(configuredPlanModeToggleShortcut(saved));
 			},
 			...(dependencies.readSettings
 				? { readSettings: async () => dependencies.readSettings?.() ?? { kind: "missing" } }
