@@ -309,7 +309,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		},
 	});
 
-	pi.registerShortcut("ctrl+n", {
+	pi.registerShortcut("ctrl+alt+p", {
 		description: "Toggle Plan mode",
 		handler: (ctx) => {
 			togglePlanMode(ctx);
