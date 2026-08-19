@@ -258,15 +258,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				return;
 			}
 			if (command === "exit" || command === "off") {
-				const notification = state.activeImplementation
-					? "Active implementation plan cleared."
-					: state.savedPlan
-						? "Saved plan cleared."
-						: state.latestPlan
-							? "Plan mode disabled. Proposed plan discarded."
-							: "Plan mode disabled.";
+				ctx.ui.notify(planModeDisableNotification(), "info");
 				exitPlanMode(ctx);
-				ctx.ui.notify(notification, "info");
 				return;
 			}
 			if (command === "tools") {
@@ -642,20 +635,23 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
 	function togglePlanMode(ctx: ExtensionContext) {
 		if (state.enabled) {
-			const notification = state.activeImplementation
-				? "Active implementation plan cleared."
-				: state.savedPlan
-					? "Saved plan cleared."
-					: state.latestPlan
-						? "Plan mode disabled. Proposed plan discarded."
-						: "Plan mode disabled.";
+			ctx.ui.notify(planModeDisableNotification(), "info");
 			exitPlanMode(ctx);
-			ctx.ui.notify(notification, "info");
 			return;
 		}
-		if (savedPlanBlocksNewWorkflow(ctx, state.savedPlan !== undefined && !state.enabled)) return;
+		if (savedPlanBlocksNewWorkflow(ctx, state.savedPlan !== undefined)) return;
 		enterPlanMode(ctx);
 		ctx.ui.notify("Plan mode enabled. I will explore and plan, but not modify files.", "info");
+	}
+
+	function planModeDisableNotification() {
+		return state.activeImplementation
+			? "Active implementation plan cleared."
+			: state.savedPlan
+				? "Saved plan cleared."
+				: state.latestPlan
+					? "Plan mode disabled. Proposed plan discarded."
+					: "Plan mode disabled.";
 	}
 
 	function requestFinalPlan(ctx: ExtensionContext) {
