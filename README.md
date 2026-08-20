@@ -93,8 +93,8 @@ After a ready plan is written, Plan mode ends, its tools and thinking level are 
 Exporting a saved or active implementation plan leaves that state unchanged.
 Failed or cancelled exports leave every Plan-mode state unchanged.
 The resulting file is available to the agent through its normal file-reading tools.
-Export is an explicit user-requested file mutation;
-model-initiated Plan-mode writes remain blocked.
+Export is an explicit user-requested file mutation.
+Model-initiated Plan-mode writes remain blocked.
 
 In TUI and RPC, **Export plan…** opens a single-line path input from every ready, saved, or active plan menu.
 The input shows both the configured value and its currently resolved path.
