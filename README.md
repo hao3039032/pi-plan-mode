@@ -45,7 +45,12 @@ pi -e ./packages/pi-plan-mode
 
 The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
 
-## 🚀 Usage
+## 🚀 Quick start
+
+Run `/plan` to open the state-aware menu, then start Plan mode and ask the agent to inspect and design the change.
+Run `/plan <prompt>` when the first planning request is already known.
+
+## 💬 Commands
 
 ```text
 /plan
@@ -164,6 +169,11 @@ You can also exit directly. Before implementation, direct exit discards the late
 ```text
 /plan exit
 ```
+
+## 🛠️ Tools
+
+- `plan_mode_question` asks up to three structured questions for material preferences or tradeoffs.
+- `plan_mode_complete` records the complete approved Markdown plan and terminates the planning turn when called alone.
 
 ## ⚙️ Settings
 
