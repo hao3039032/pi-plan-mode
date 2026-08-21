@@ -75,7 +75,7 @@ The bounded multi-select shows 10 rows at a time, supports viewport paging, desc
 In TUI mode, type to fuzzy-search tool names, descriptions, policy, and source metadata; RPC keeps the complete unfiltered list.
 Once Plan mode is active, tools are locked: `/plan` no longer offers tool or Settings actions, and `/plan tools` rejects the request.
 Exit and start a new workflow if a different tool set is required.
-The `plan_mode_question` tool keeps its one-off question/choice dialog because it is a model-requested planning interaction, not command-menu navigation.
+The `plan_mode_question` tool keeps a dedicated model-requested questionnaire instead of using command-menu navigation.
 `/plan show` displays the stored plan without starting a model turn, including the accepted plan while implementation is active.
 `/plan finalize` explicitly asks the agent to complete the plan or ask one remaining material question, `/plan save` stores a completed ready plan for later and leaves Plan mode, and `/plan export [path]` writes a ready, saved, or active implementation plan to Markdown.
 Completed and saved plan menus offer **Implement here**, which continues with the planning conversation, and **Start fresh and implement**, which opens a new session and transfers only the approved plan.
@@ -122,6 +122,14 @@ Tests and builds may still write ignored caches or build artifacts and may execu
 This is extension-level risk reduction, not an OS sandbox.
 
 `plan_mode_question` follows Codex's `request_user_input` pattern: the agent can ask 1-3 concise questions, each with meaningful options and a free-form Other path.
+In TUI mode, one question appears at a time with question tabs and a final Review tab.
+Use Tab, Shift+Tab, left, or right to visit any question or Review, including unanswered future questions.
+Use up and down to choose an option, Enter to record it and advance, or `n` to record the highlighted option and open its optional note editor. Press `n` again on an answered item to edit or clear its note.
+Revisit a question to replace its answer; changing the chosen option clears its prior note.
+Review lists every answer and note, lets up and down select an answer for note editing, and submits the ordered payload only after every question is answered.
+Custom answers and notes retain their raw submitted text in the tool result, while terminal rendering is sanitized.
+The TUI rejects either field above 4,000 characters instead of truncating it.
+RPC keeps the existing sequential `select` and `editor` dialogs because Pi RPC cannot render custom TUI components.
 If you cancel or no interactive UI is available, the agent should ask a concise plain-text question or proceed only with a clearly stated low-risk assumption instead of prematurely producing a final plan.
 
 Pi activates tools by tool name.
@@ -212,7 +220,7 @@ During implementation, it removes both the original implementation handoff and t
 
 ## 🛠️ Tools
 
-- `plan_mode_question` asks up to three structured questions for material preferences or tradeoffs.
+- `plan_mode_question` asks up to three structured questions, supports optional answer notes, and reviews the ordered result before TUI submission.
 - `plan_mode_complete` records the complete approved Markdown plan and terminates the planning turn when called alone.
 
 ## ⚙️ Settings

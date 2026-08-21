@@ -1,6 +1,20 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { stripVTControlCharacters } from "node:util";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import {
+	type Component,
+	Editor,
+	type EditorTheme,
+	type Focusable,
+	Key,
+	matchesKey,
+	sliceByColumn,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 export const PLAN_MODE_QUESTION_TOOL_NAME = "plan_mode_question";
+export const MAX_PLAN_MODE_RESPONSE_LENGTH = 4_000;
 
 export type PlanModeQuestionOption = {
 	label: string;
@@ -14,13 +28,14 @@ export type PlanModeQuestion = {
 	options: PlanModeQuestionOption[];
 };
 
-type PlanModeQuestionAnswer = {
+export type PlanModeQuestionAnswer = {
 	id: string;
 	header: string;
 	question: string;
 	answer: string;
 	wasCustom: boolean;
 	optionIndex?: number;
+	note?: string;
 };
 
 type PlanModeQuestionReason =
@@ -187,6 +202,28 @@ export async function askPlanModeQuestions(
 	ctx: ExtensionContext,
 	shouldContinue: () => boolean = () => true,
 ): Promise<PlanModeQuestionAnswer[] | undefined> {
+	if (ctx.mode === "tui") {
+		const answers = await ctx.ui.custom<PlanModeQuestionAnswer[] | undefined>(
+			(tui, theme, _keybindings, done) =>
+				new PlanModeQuestionnaire({
+					questions,
+					tui,
+					theme,
+					shouldContinue,
+					signal: ctx.signal,
+					onDone: done,
+				}),
+		);
+		return shouldContinue() ? answers : undefined;
+	}
+	return askPlanModeQuestionsSequentially(questions, ctx, shouldContinue);
+}
+
+async function askPlanModeQuestionsSequentially(
+	questions: PlanModeQuestion[],
+	ctx: ExtensionContext,
+	shouldContinue: () => boolean,
+): Promise<PlanModeQuestionAnswer[] | undefined> {
 	const answers: PlanModeQuestionAnswer[] = [];
 	for (const question of questions) {
 		const choices = question.options.map(formatPlanModeQuestionChoice);
@@ -197,30 +234,394 @@ export async function askPlanModeQuestions(
 		]);
 		if (!shouldContinue() || !choice) return undefined;
 		if (choice === otherChoice) {
-			const customAnswer = (await ctx.ui.editor(question.question, ""))?.trim();
-			if (!shouldContinue() || !customAnswer) return undefined;
-			answers.push({
-				id: question.id,
-				header: question.header,
-				question: question.question,
-				answer: customAnswer,
-				wasCustom: true,
-			});
+			const customAnswer = await askCustomAnswer(question, ctx, shouldContinue);
+			if (customAnswer === undefined) return undefined;
+			answers.push(answerFor(question, customAnswer, { wasCustom: true }));
 			continue;
 		}
 		const optionIndex = choices.indexOf(choice);
 		const option = question.options[optionIndex];
 		if (!option) return undefined;
-		answers.push({
-			id: question.id,
-			header: question.header,
-			question: question.question,
-			answer: option.label,
-			wasCustom: false,
-			optionIndex: optionIndex + 1,
-		});
+		answers.push(
+			answerFor(question, option.label, { wasCustom: false, optionIndex: optionIndex + 1 }),
+		);
 	}
 	return answers;
+}
+
+async function askCustomAnswer(
+	question: PlanModeQuestion,
+	ctx: ExtensionContext,
+	shouldContinue: () => boolean,
+): Promise<string | undefined> {
+	let draft = "";
+	for (;;) {
+		const customAnswer = await ctx.ui.editor(question.question, draft);
+		if (!shouldContinue() || !customAnswer?.trim()) return undefined;
+		if (customAnswer.length <= MAX_PLAN_MODE_RESPONSE_LENGTH) return customAnswer;
+		draft = customAnswer;
+		ctx.ui.notify("Custom answer must be 4,000 characters or fewer.", "warning");
+	}
+}
+
+interface QuestionnaireOptions {
+	questions: PlanModeQuestion[];
+	tui: TUI;
+	theme: Theme;
+	shouldContinue(): boolean;
+	signal?: AbortSignal;
+	onDone(answers: PlanModeQuestionAnswer[] | undefined): void;
+}
+
+export class PlanModeQuestionnaire implements Component, Focusable {
+	private readonly options: QuestionnaireOptions;
+	private readonly editor: Editor;
+	private readonly answers: Array<PlanModeQuestionAnswer | undefined>;
+	private readonly selectedOptions: number[];
+	private page = 0;
+	private reviewSelection = 0;
+	private editorKind: "answer" | "note" | undefined;
+	private message: string | undefined;
+	private finished = false;
+	private removeAbort = () => {};
+	private _focused = false;
+
+	constructor(options: QuestionnaireOptions) {
+		this.options = options;
+		this.answers = options.questions.map(() => undefined);
+		this.selectedOptions = options.questions.map(() => 0);
+		const editorTheme: EditorTheme = {
+			borderColor: (text) => options.theme.fg("accent", text),
+			selectList: {
+				selectedPrefix: (text) => options.theme.fg("accent", text),
+				selectedText: (text) => options.theme.fg("accent", text),
+				description: (text) => options.theme.fg("muted", text),
+				scrollInfo: (text) => options.theme.fg("dim", text),
+				noMatch: (text) => options.theme.fg("warning", text),
+			},
+		};
+		this.editor = new Editor(options.tui, editorTheme, { paddingX: 0 });
+		this.editor.onChange = () => {
+			this.message = undefined;
+		};
+		this.editor.onSubmit = (text) => this.submitEditor(text);
+		if (options.signal) {
+			const abort = () => this.finish(undefined);
+			options.signal.addEventListener("abort", abort, { once: true });
+			this.removeAbort = () => options.signal?.removeEventListener("abort", abort);
+			if (options.signal.aborted) abort();
+		}
+	}
+
+	get focused(): boolean {
+		return this._focused;
+	}
+
+	set focused(value: boolean) {
+		this._focused = value;
+		this.editor.focused = value && this.editorKind !== undefined;
+	}
+
+	render(width: number): string[] {
+		const safeWidth = Math.max(1, width);
+		const lines = [this.renderTabs(safeWidth), ""];
+		if (this.page === this.options.questions.length) lines.push(...this.renderReview(safeWidth));
+		else lines.push(...this.renderQuestion(safeWidth));
+		if (this.message)
+			lines.push(...hardWrap(this.options.theme.fg("warning", this.message), safeWidth));
+		lines.push("");
+		lines.push(
+			truncateToWidth(
+				this.options.theme.fg(
+					"dim",
+					this.editorKind
+						? "Enter save · Esc/Ctrl+C cancel questionnaire"
+						: "Tab/Shift+Tab or ←/→ navigate · ↑/↓ select · Enter answer/submit · n note · Esc cancel",
+				),
+				safeWidth,
+			),
+		);
+		return lines.map((line) => truncateToWidth(line, safeWidth));
+	}
+
+	handleInput(data: string): void {
+		if (this.finished) return;
+		if (!this.options.shouldContinue() || this.isCancel(data)) {
+			this.finish(undefined);
+			return;
+		}
+		if (this.editorKind) this.handleEditorInput(data);
+		else this.handlePageInput(data);
+		this.options.tui.requestRender();
+	}
+
+	invalidate(): void {
+		this.editor.invalidate();
+	}
+
+	dispose(): void {
+		this.finish(undefined);
+	}
+
+	private isCancel(data: string): boolean {
+		return matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"));
+	}
+
+	private handleEditorInput(data: string): void {
+		if (matchesKey(data, Key.enter)) this.submitEditor(this.editor.getExpandedText());
+		else this.editor.handleInput(data);
+	}
+
+	private handlePageInput(data: string): void {
+		if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+			this.movePage(1);
+			return;
+		}
+		if (matchesKey(data, Key.shift("tab")) || matchesKey(data, Key.left)) {
+			this.movePage(-1);
+			return;
+		}
+		if (matchesKey(data, Key.up)) {
+			this.moveSelection(-1);
+			return;
+		}
+		if (matchesKey(data, Key.down)) {
+			this.moveSelection(1);
+			return;
+		}
+		if (data.toLowerCase() === "n") {
+			this.editNote();
+			return;
+		}
+		if (matchesKey(data, Key.enter)) this.submitPage();
+	}
+
+	private movePage(delta: number): void {
+		const pageCount = this.options.questions.length + 1;
+		this.page = (this.page + delta + pageCount) % pageCount;
+		this.message = undefined;
+	}
+
+	private renderTabs(width: number): string {
+		const tabs = [
+			...this.options.questions.map((question, index) => {
+				const label = sanitizeTerminalText(question.header) || `Question ${index + 1}`;
+				const answered = this.answers[index] ? "✓ " : "";
+				return this.page === index ? `[${answered}${label}]` : `${answered}${label}`;
+			}),
+			this.page === this.options.questions.length ? "[Review]" : "Review",
+		];
+		return truncateToWidth(this.options.theme.fg("accent", tabs.join("  ")), width, "…");
+	}
+
+	private renderQuestion(width: number): string[] {
+		const question = this.options.questions[this.page];
+		if (!question) return [];
+		const lines = hardWrap(
+			this.options.theme.fg("text", sanitizeTerminalText(question.question)),
+			width,
+		);
+		lines.push("");
+		question.options.forEach((option, index) => {
+			const cursor = this.selectedOptions[this.page] === index ? "›" : " ";
+			const chosen = this.answers[this.page]?.optionIndex === index + 1 ? "●" : "○";
+			const label = `${cursor} ${chosen} ${sanitizeTerminalText(option.label)}`;
+			lines.push(...hardWrap(this.options.theme.fg("text", label), width));
+			if (option.description) {
+				lines.push(
+					...hardWrap(
+						`    ${this.options.theme.fg("muted", sanitizeTerminalText(option.description))}`,
+						width,
+					),
+				);
+			}
+		});
+		const otherIndex = question.options.length;
+		const otherCursor = this.selectedOptions[this.page] === otherIndex ? "›" : " ";
+		const otherChosen = this.answers[this.page]?.wasCustom ? "●" : "○";
+		lines.push(`${otherCursor} ${otherChosen} Other (free-form)`);
+		const answer = this.answers[this.page];
+		if (answer?.wasCustom)
+			lines.push(...labeledRaw("Answer", answer.answer, width, this.options.theme));
+		if (answer?.note) lines.push(...labeledRaw("Note", answer.note, width, this.options.theme));
+		if (this.editorKind) {
+			lines.push("");
+			lines.push(
+				this.options.theme.fg(
+					"accent",
+					this.editorKind === "answer" ? "Custom answer" : "Optional note",
+				),
+			);
+			lines.push(...this.editor.render(width));
+		}
+		return lines;
+	}
+
+	private renderReview(width: number): string[] {
+		const lines = [this.options.theme.fg("text", "Review answers")];
+		this.options.questions.forEach((question, index) => {
+			const answer = this.answers[index];
+			const cursor = this.reviewSelection === index ? "›" : " ";
+			const header = sanitizeTerminalText(question.header) || `Question ${index + 1}`;
+			lines.push("");
+			lines.push(`${cursor} ${this.options.theme.fg("accent", header)}`);
+			lines.push(
+				...labeledRaw("Answer", answer?.answer ?? "Unanswered", width, this.options.theme),
+			);
+			if (answer?.note) lines.push(...labeledRaw("Note", answer.note, width, this.options.theme));
+		});
+		if (this.editorKind === "note") {
+			lines.push("");
+			lines.push(this.options.theme.fg("accent", "Optional note"));
+			lines.push(...this.editor.render(width));
+		}
+		return lines;
+	}
+
+	private moveSelection(delta: number): void {
+		if (this.page === this.options.questions.length) {
+			this.reviewSelection =
+				(this.reviewSelection + delta + this.options.questions.length) %
+				this.options.questions.length;
+			return;
+		}
+		const optionCount = (this.options.questions[this.page]?.options.length ?? 0) + 1;
+		this.selectedOptions[this.page] =
+			((this.selectedOptions[this.page] ?? 0) + delta + optionCount) % optionCount;
+	}
+
+	private submitPage(): void {
+		if (this.page === this.options.questions.length) {
+			const firstMissing = this.answers.findIndex((answer) => !answer);
+			if (firstMissing >= 0) {
+				this.message = "Answer every question before submitting.";
+				return;
+			}
+			this.finish(
+				this.answers.filter((answer): answer is PlanModeQuestionAnswer => answer !== undefined),
+			);
+			return;
+		}
+		const question = this.options.questions[this.page];
+		if (!question) return;
+		const selected = this.selectedOptions[this.page] ?? 0;
+		if (selected === question.options.length) {
+			this.beginEditor(
+				"answer",
+				this.answers[this.page]?.wasCustom ? this.answers[this.page]?.answer : "",
+			);
+			return;
+		}
+		const option = question.options[selected];
+		if (!option) return;
+		const previous = this.answers[this.page];
+		this.answers[this.page] = answerFor(question, option.label, {
+			wasCustom: false,
+			optionIndex: selected + 1,
+			note: previous?.optionIndex === selected + 1 ? previous.note : undefined,
+		});
+		this.advance();
+	}
+
+	private editNote(): void {
+		const review = this.page === this.options.questions.length;
+		const index = review ? this.reviewSelection : this.page;
+		let answer = this.answers[index];
+		if (!review) {
+			const question = this.options.questions[index];
+			const selected = this.selectedOptions[index] ?? 0;
+			if (question && selected === question.options.length && !answer?.wasCustom) {
+				this.beginEditor("answer", "");
+				return;
+			}
+			if (question && selected < question.options.length && answer?.optionIndex !== selected + 1) {
+				const option = question.options[selected];
+				if (option) {
+					answer = answerFor(question, option.label, {
+						wasCustom: false,
+						optionIndex: selected + 1,
+					});
+					this.answers[index] = answer;
+				}
+			}
+		}
+		if (!answer) {
+			this.message = "Select an answer before adding a note.";
+			return;
+		}
+		this.beginEditor("note", answer.note ?? "");
+	}
+
+	private beginEditor(kind: "answer" | "note", value: string | undefined): void {
+		this.editorKind = kind;
+		this.editor.setText(value ?? "");
+		this.editor.focused = this._focused;
+		this.message = undefined;
+	}
+
+	private submitEditor(value: string): void {
+		if (value.length > MAX_PLAN_MODE_RESPONSE_LENGTH) {
+			this.editor.setText(value);
+			this.message = `${this.editorKind === "answer" ? "Answer" : "Note"} must be 4,000 characters or fewer.`;
+			this.options.tui.requestRender();
+			return;
+		}
+		const index = this.page === this.options.questions.length ? this.reviewSelection : this.page;
+		if (this.editorKind === "answer") {
+			if (!value.trim()) {
+				this.editor.setText(value);
+				this.message = "Custom answer cannot be empty.";
+				this.options.tui.requestRender();
+				return;
+			}
+			const question = this.options.questions[index];
+			if (!question) return;
+			this.answers[index] = answerFor(question, value, { wasCustom: true });
+			this.editor.setText("");
+			this.editorKind = undefined;
+			this.editor.focused = false;
+			this.advance();
+			return;
+		}
+		const answer = this.answers[index];
+		if (answer) answer.note = value.trim() ? value : undefined;
+		this.editor.setText("");
+		this.editorKind = undefined;
+		this.editor.focused = false;
+		this.message = value.trim() ? "Note saved." : "Note cleared.";
+		this.options.tui.requestRender();
+	}
+
+	private advance(): void {
+		this.page = Math.min(this.page + 1, this.options.questions.length);
+		this.message = undefined;
+	}
+
+	private finish(answers: PlanModeQuestionAnswer[] | undefined): void {
+		if (this.finished) return;
+		this.finished = true;
+		this.removeAbort();
+		this.removeAbort = () => {};
+		this.editor.focused = false;
+		this.options.onDone(answers);
+	}
+}
+
+function answerFor(
+	question: PlanModeQuestion,
+	answer: string,
+	options: { wasCustom: boolean; optionIndex?: number; note?: string },
+): PlanModeQuestionAnswer {
+	const result: PlanModeQuestionAnswer = {
+		id: question.id,
+		header: question.header,
+		question: question.question,
+		answer,
+		wasCustom: options.wasCustom,
+	};
+	if (options.optionIndex !== undefined) result.optionIndex = options.optionIndex;
+	if (options.note !== undefined) result.note = options.note;
+	return result;
 }
 
 function formatPlanModeQuestionChoice(option: PlanModeQuestionOption, index: number) {
@@ -262,6 +663,56 @@ function formatPlanModeQuestionPayload(payload: {
 	answers?: PlanModeQuestionAnswer[];
 }) {
 	return JSON.stringify(payload, null, 2);
+}
+
+export function sanitizeTerminalText(value: string): string {
+	return [...stripVTControlCharacters(value)]
+		.map((character) => {
+			const codePoint = character.codePointAt(0) ?? 0;
+			return codePoint <= 0x1f ||
+				(codePoint >= 0x7f && codePoint <= 0x9f) ||
+				codePoint === 0x2028 ||
+				codePoint === 0x2029 ||
+				isBidiControl(codePoint)
+				? " "
+				: character;
+		})
+		.join("");
+}
+
+function isBidiControl(codePoint: number): boolean {
+	return (
+		codePoint === 0x061c ||
+		codePoint === 0x200e ||
+		codePoint === 0x200f ||
+		(codePoint >= 0x202a && codePoint <= 0x202e) ||
+		(codePoint >= 0x2066 && codePoint <= 0x2069)
+	);
+}
+
+function labeledRaw(label: string, value: string, width: number, theme: Theme): string[] {
+	const prefix = `${label}: `;
+	const safe = sanitizeTerminalText(value);
+	const lines = hardWrap(safe, Math.max(1, width - visibleWidth(prefix)));
+	return lines.map((line, index) =>
+		index === 0 ? `${theme.fg("muted", prefix)}${line}` : `${" ".repeat(prefix.length)}${line}`,
+	);
+}
+
+function hardWrap(value: string, width: number): string[] {
+	const safeWidth = Math.max(1, width);
+	if (!value) return [""];
+	const output: string[] = [];
+	for (const sourceLine of value.split("\n")) {
+		const columns = visibleWidth(sourceLine);
+		if (columns === 0) output.push("");
+		else {
+			for (let column = 0; column < columns; column += safeWidth) {
+				output.push(sliceByColumn(sourceLine, column, safeWidth));
+			}
+		}
+	}
+	return output;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
