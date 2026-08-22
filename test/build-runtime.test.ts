@@ -164,6 +164,18 @@ test("runtime builds are deterministic, mapped, external, and remove stale outpu
 			assert.doesNotMatch(source, /["']\.\.?\/[^"']*src\//u);
 			assert.ok(files.includes(`${runtimePath}.map`), `missing map for ${runtimePath}`);
 		}
+		const kitImports = Object.values(firstMetadata.outputs ?? {})
+			.flatMap((output) => output.imports ?? [])
+			.filter((imported) => imported.path === "@narumitw/pi-tui-kit");
+		assert.ok(kitImports.length > 0, "generated runtime must import Pi TUI Kit");
+		assert.ok(
+			kitImports.every((imported) => imported.external),
+			"Pi TUI Kit must remain external",
+		);
+		assert.ok(
+			kitImports.some((imported) => imported.kind === "dynamic-import"),
+			"the questionnaire runner must remain a first-use import",
+		);
 		for (const output of Object.values(firstMetadata.outputs ?? {})) {
 			for (const input of Object.keys(output.inputs ?? {})) {
 				assert.equal(input.includes("node_modules/"), false, `bundled package input: ${input}`);

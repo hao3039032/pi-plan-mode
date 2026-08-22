@@ -421,6 +421,7 @@ test("a Plan-mode question cannot commit or open its next prompt after Plan mode
 	const mock = createMockPi({ activeTools: ["read"] });
 	planMode(mock.pi);
 	const context = createMockContext({
+		mode: "rpc",
 		hasUI: true,
 		select: async () => {
 			selectCalls += 1;
