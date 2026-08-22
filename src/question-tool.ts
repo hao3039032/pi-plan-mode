@@ -1,5 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
-import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
 	Editor,
@@ -207,11 +207,12 @@ export async function askPlanModeQuestions(
 ): Promise<PlanModeQuestionAnswer[] | undefined> {
 	if (ctx.mode === "tui") {
 		const answers = await ctx.ui.custom<PlanModeQuestionAnswer[] | undefined>(
-			(tui, theme, _keybindings, done) =>
+			(tui, theme, keybindings, done) =>
 				new PlanModeQuestionnaire({
 					questions,
 					tui,
 					theme,
+					keybindings,
 					shouldContinue,
 					signal: ctx.signal,
 					onDone: done,
@@ -271,6 +272,7 @@ interface QuestionnaireOptions {
 	questions: PlanModeQuestion[];
 	tui: TUI;
 	theme: Theme;
+	keybindings: KeybindingsManager;
 	shouldContinue(): boolean;
 	signal?: AbortSignal;
 	onDone(answers: PlanModeQuestionAnswer[] | undefined): void;
@@ -335,21 +337,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		if (this.message)
 			lines.push(...hardWrap(this.options.theme.fg("warning", this.message), contentWidth));
 		lines.push("");
-		lines.push(
-			truncateToWidth(
-				this.options.theme.fg(
-					"dim",
-					this.editorKind
-						? "Enter save · Esc/Ctrl+C cancel questionnaire"
-						: this.page === this.options.questions.length
-							? "Tab/Shift+Tab or ←/→ navigate · Enter submit · Esc cancel"
-							: "Tab/Shift+Tab or ←/→ navigate · ↑/↓ select · Enter answer · n note · Esc cancel",
-				),
-				contentWidth,
-			),
-			"",
-			border,
-		);
+		lines.push(truncateToWidth(this.renderHints(), contentWidth), "", border);
 		return lines.map((line) => {
 			if (!line || line === border) return line;
 			return `${padding}${truncateToWidth(line, contentWidth)}`;
@@ -376,16 +364,36 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 	}
 
 	private isCancel(data: string): boolean {
-		return matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"));
+		return this.options.keybindings.matches(data, "tui.select.cancel");
 	}
 
 	private handleEditorInput(data: string): void {
-		if (matchesKey(data, Key.enter)) this.submitEditor(this.editor.getExpandedText());
-		else this.editor.handleInput(data);
+		const keybindings = this.options.keybindings;
+		if (keybindings.matches(data, "tui.input.newLine")) {
+			this.editor.handleInput(data);
+		} else if (keybindings.matches(data, "tui.input.submit")) {
+			this.submitEditor(this.editor.getExpandedText());
+		} else {
+			this.editor.handleInput(data);
+		}
 	}
 
 	private handlePageInput(data: string): void {
-		if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
+		const keybindings = this.options.keybindings;
+		const review = this.page === this.options.questions.length;
+		if (keybindings.matches(data, "tui.select.up") || data === "k") {
+			if (!review) this.moveSelection(-1);
+			return;
+		}
+		if (keybindings.matches(data, "tui.select.down") || data === "j") {
+			if (!review) this.moveSelection(1);
+			return;
+		}
+		if (keybindings.matches(data, "tui.select.confirm") || data === "\n") {
+			this.submitPage();
+			return;
+		}
+		if (keybindings.matches(data, "tui.input.tab") || matchesKey(data, Key.right)) {
 			this.movePage(1);
 			return;
 		}
@@ -393,21 +401,37 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 			this.movePage(-1);
 			return;
 		}
-		const review = this.page === this.options.questions.length;
-		if (matchesKey(data, Key.up)) {
-			if (!review) this.moveSelection(-1);
-			return;
-		}
-		if (matchesKey(data, Key.down)) {
-			if (!review) this.moveSelection(1);
-			return;
-		}
 		if (data.toLowerCase() === "n") {
 			if (review) this.message = "Return to a question to add or edit its note.";
 			else this.editNote();
-			return;
 		}
-		if (matchesKey(data, Key.enter)) this.submitPage();
+	}
+
+	private renderHints(): string {
+		const { keybindings, theme } = this.options;
+		const cancel = keybindingHint(theme, keybindings, "tui.select.cancel", "cancel");
+		if (this.editorKind) {
+			return [
+				keybindingHint(theme, keybindings, "tui.input.submit", "save"),
+				keybindingHint(theme, keybindings, "tui.input.newLine", "newline"),
+				cancel,
+			].join("  ");
+		}
+		const questions = rawKeyHint(theme, questionNavigationKeys(keybindings), "questions");
+		if (this.page === this.options.questions.length) {
+			return [
+				keybindingHint(theme, keybindings, "tui.select.confirm", "submit"),
+				cancel,
+				questions,
+			].join("  ");
+		}
+		return [
+			rawKeyHint(theme, selectionNavigationKeys(keybindings), "navigate"),
+			keybindingHint(theme, keybindings, "tui.select.confirm", "select"),
+			cancel,
+			questions,
+			rawKeyHint(theme, "n", "note"),
+		].join("  ");
 	}
 
 	private movePage(delta: number): void {
@@ -869,6 +893,51 @@ function isBidiControl(codePoint: number): boolean {
 		(codePoint >= 0x202a && codePoint <= 0x202e) ||
 		(codePoint >= 0x2066 && codePoint <= 0x2069)
 	);
+}
+
+type QuestionnaireKeybinding = Parameters<KeybindingsManager["getKeys"]>[0];
+
+function keybindingHint(
+	theme: Theme,
+	keybindings: KeybindingsManager,
+	keybinding: QuestionnaireKeybinding,
+	description: string,
+): string {
+	return rawKeyHint(theme, formatHintKeys(keybindings.getKeys(keybinding)), description);
+}
+
+function rawKeyHint(theme: Theme, keys: string, description: string): string {
+	return `${theme.fg("dim", keys)}${theme.fg("muted", ` ${description}`)}`;
+}
+
+function selectionNavigationKeys(keybindings: KeybindingsManager): string {
+	const up = keybindings.getKeys("tui.select.up");
+	const down = keybindings.getKeys("tui.select.down");
+	if (up.includes("up") && down.includes("down")) {
+		return formatHintKeys([
+			"↑↓",
+			...up.filter((key) => key !== "up"),
+			...down.filter((key) => key !== "down"),
+		]);
+	}
+	return formatHintKeys([...up, ...down]);
+}
+
+function questionNavigationKeys(keybindings: KeybindingsManager): string {
+	return formatHintKeys([...keybindings.getKeys("tui.input.tab"), "shift+tab", "←→"]);
+}
+
+function formatHintKeys(keys: readonly string[]): string {
+	return [...new Set(keys)].map(formatHintKey).join("/");
+}
+
+function formatHintKey(key: string): string {
+	return key
+		.split("+")
+		.map((part) =>
+			process.platform === "darwin" && part.toLowerCase() === "alt" ? "option" : part,
+		)
+		.join("+");
 }
 
 function inlineSummary(value: string): string {

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
-import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	CURSOR_MARKER,
+	KeybindingsManager,
+	TUI_KEYBINDINGS,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
@@ -35,7 +40,11 @@ const questions: PlanModeQuestion[] = [
 ];
 
 function tuiRun(customQuestions = questions, width = 60) {
-	const tui = createTuiHarness({ width, rows: 30 });
+	const tui = createTuiHarness({
+		width,
+		rows: 30,
+		keybindings: new KeybindingsManager(TUI_KEYBINDINGS),
+	});
 	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
 	const running = askPlanModeQuestions(customQuestions, context.ctx);
 	return { tui, running };
@@ -131,6 +140,7 @@ test("TUI applies legacy selector emphasis to borders, title, and selected optio
 		foreground.some(({ color, text }) => color === "muted" && text === " — Include cleanup."),
 	);
 	assert.ok(bold.includes("How broad?"));
+	assert.match(tui.render().join("\n"), /↑↓ navigate {2}enter select {2}escape\/ctrl\+c cancel/u);
 	tui.dispose();
 	assert.equal(await running, undefined);
 });
@@ -163,7 +173,7 @@ test("Review renders plain summaries without selection affordances", async () =>
 	const frame = tui.render().join("\n");
 	assert.match(frame, /\n 1\. Scope — Unanswered\n 2\. Tests — Unanswered/u);
 	assert.doesNotMatch(frame, /→ [12]\./u);
-	assert.match(frame, /Enter submit/u);
+	assert.match(frame, /enter submit/u);
 	assert.doesNotMatch(frame, /↑\/↓ select|n note/u);
 	assert.ok(foreground.some(({ color, text }) => color === "text" && text === "1. Scope"));
 	assert.ok(foreground.some(({ color, text }) => color === "text" && text === "2. Tests"));
@@ -179,6 +189,50 @@ test("Review renders plain summaries without selection affordances", async () =>
 	tui.press("tui.select.down");
 	assert.equal(tui.render().join("\n"), unchanged);
 	tui.dispose();
+	assert.equal(await running, undefined);
+});
+
+test("TUI uses configured selector keybindings and legacy j/k aliases", async () => {
+	const bindings = {
+		"tui.input.newLine": { data: "\u001b[13;3u", key: "alt+enter" },
+		"tui.input.submit": { data: "\u0013", key: "ctrl+s" },
+		"tui.input.tab": { data: "t", key: "t" },
+		"tui.select.cancel": { data: "q", key: "q" },
+		"tui.select.confirm": { data: "x", key: "x" },
+		"tui.select.down": { data: "s", key: "s" },
+		"tui.select.up": { data: "w", key: "w" },
+	} as const;
+	const tui = createTuiHarness({
+		width: 120,
+		rows: 30,
+		keybindings: {
+			matches: (data, binding) => bindings[binding as keyof typeof bindings]?.data === data,
+			getKeys: (binding) => {
+				const configured = bindings[binding as keyof typeof bindings];
+				return configured ? [configured.key] : [];
+			},
+		},
+	});
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+	const running = askPlanModeQuestions(questions, context.ctx);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	assert.match(
+		tui.render().join("\n"),
+		/w\/s navigate {2}x select {2}q cancel {2}t\/shift\+tab\/←→ questions {2}n note/u,
+	);
+	tui.send("j");
+	assert.match(tui.render().join("\n"), /→ 2\. Broad/u);
+	tui.send("k");
+	assert.match(tui.render().join("\n"), /→ 1\. Small/u);
+	tui.send("s");
+	tui.send("t");
+	assert.match(tui.render().join("\n"), /\[Tests\]/u);
+	tui.send("\u001b[D");
+	tui.send("x");
+	tui.send("x");
+	assert.match(tui.render().join("\n"), /x submit {2}q cancel/u);
+	tui.send("q");
 	assert.equal(await running, undefined);
 });
 
