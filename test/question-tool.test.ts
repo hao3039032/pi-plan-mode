@@ -92,7 +92,39 @@ test("TUI frames the questionnaire with select-style separator borders", async (
 	await tui.waitForOpen();
 	const frame = tui.render();
 	assert.equal(frame[0], "─".repeat(40));
+	assert.equal(frame[1], "");
+	assert.equal(frame.at(-2), "");
 	assert.equal(frame.at(-1), "─".repeat(40));
+	assert.match(frame.join("\n"), /^ How broad\?$/mu);
+	tui.dispose();
+	assert.equal(await running, undefined);
+});
+
+test("TUI applies legacy selector emphasis to borders, title, and selected option", async () => {
+	const foreground: Array<{ color: string; text: string }> = [];
+	const bold: string[] = [];
+	const tui = createTuiHarness({
+		width: 60,
+		rows: 30,
+		theme: {
+			fg: (color, text) => {
+				foreground.push({ color: String(color), text });
+				return text;
+			},
+			bold: (text) => {
+				bold.push(text);
+				return text;
+			},
+		},
+	});
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+	const running = askPlanModeQuestions([questions[0]], context.ctx);
+	await tui.waitForOpen();
+	tui.render();
+	assert.ok(foreground.some(({ color, text }) => color === "border" && text === "─".repeat(60)));
+	assert.ok(foreground.some(({ color, text }) => color === "accent" && /→ 1\. Small/u.test(text)));
+	assert.ok(foreground.some(({ color, text }) => color === "accent" && text === "Only the bug."));
+	assert.ok(bold.includes("How broad?"));
 	tui.dispose();
 	assert.equal(await running, undefined);
 });
@@ -102,17 +134,17 @@ test("TUI uses numbered select styling and restores the recorded answer cursor",
 	await tui.waitForOpen();
 	tui.setFocused(true);
 	let frame = tui.render().join("\n");
-	assert.match(frame, /› 1\. Small/u);
+	assert.match(frame, /→ 1\. Small/u);
 	assert.doesNotMatch(frame, /[○●]/u);
 	tui.press("tui.select.down");
 	tui.press("tui.select.confirm");
 	tui.send("\u001b[D");
 	frame = tui.render().join("\n");
-	assert.match(frame, /› 2\. Broad ✓/u);
+	assert.match(frame, /→ 2\. Broad ✓/u);
 	tui.press("tui.select.up");
 	tui.send("\u001b[C");
 	tui.send("\u001b[D");
-	assert.match(tui.render().join("\n"), /› 2\. Broad ✓/u);
+	assert.match(tui.render().join("\n"), /→ 2\. Broad ✓/u);
 	tui.press("tui.select.cancel");
 	assert.equal(await running, undefined);
 });

@@ -327,12 +327,14 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
-		const border = this.options.theme.fg("accent", "─".repeat(safeWidth));
-		const lines = [border, ...this.renderTabs(safeWidth), ""];
-		if (this.page === this.options.questions.length) lines.push(...this.renderReview(safeWidth));
-		else lines.push(...this.renderQuestion(safeWidth));
+		const padding = safeWidth > 1 ? " " : "";
+		const contentWidth = Math.max(1, safeWidth - visibleWidth(padding));
+		const border = this.options.theme.fg("border", "─".repeat(safeWidth));
+		const lines = [border, "", ...this.renderTabs(contentWidth), ""];
+		if (this.page === this.options.questions.length) lines.push(...this.renderReview(contentWidth));
+		else lines.push(...this.renderQuestion(contentWidth));
 		if (this.message)
-			lines.push(...hardWrap(this.options.theme.fg("warning", this.message), safeWidth));
+			lines.push(...hardWrap(this.options.theme.fg("warning", this.message), contentWidth));
 		lines.push("");
 		lines.push(
 			truncateToWidth(
@@ -342,11 +344,15 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 						? "Enter save · Esc/Ctrl+C cancel questionnaire"
 						: "Tab/Shift+Tab or ←/→ navigate · ↑/↓ select · Enter answer/submit · n note · Esc cancel",
 				),
-				safeWidth,
+				contentWidth,
 			),
+			"",
 			border,
 		);
-		return lines.map((line) => truncateToWidth(line, safeWidth));
+		return lines.map((line) => {
+			if (!line || line === border) return line;
+			return `${padding}${truncateToWidth(line, contentWidth)}`;
+		});
 	}
 
 	handleInput(data: string): void {
@@ -443,28 +449,41 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		const question = this.options.questions[this.page];
 		if (!question) return [];
 		const lines = hardWrap(
-			this.options.theme.fg("text", sanitizeTerminalText(question.question)),
+			this.options.theme.fg(
+				"accent",
+				this.options.theme.bold(sanitizeTerminalText(question.question)),
+			),
 			width,
 		);
 		lines.push("");
 		question.options.forEach((option, index) => {
-			const cursor = this.selectedOptions[this.page] === index ? "›" : " ";
+			const selected = this.selectedOptions[this.page] === index;
+			const cursor = selected ? "→" : " ";
 			const chosen = this.answers[this.page]?.optionIndex === index + 1 ? " ✓" : "";
 			const label = `${cursor} ${index + 1}. ${sanitizeTerminalText(option.label)}${chosen}`;
-			lines.push(...hardWrap(this.options.theme.fg("text", label), width));
+			lines.push(...hardWrap(this.options.theme.fg(selected ? "accent" : "text", label), width));
 			if (option.description) {
 				lines.push(
 					...hardWrap(
-						`    ${this.options.theme.fg("muted", sanitizeTerminalText(option.description))}`,
+						`    ${this.options.theme.fg(
+							selected ? "accent" : "muted",
+							sanitizeTerminalText(option.description),
+						)}`,
 						width,
 					),
 				);
 			}
 		});
 		const otherIndex = question.options.length;
-		const otherCursor = this.selectedOptions[this.page] === otherIndex ? "›" : " ";
+		const otherSelected = this.selectedOptions[this.page] === otherIndex;
+		const otherCursor = otherSelected ? "→" : " ";
 		const otherChosen = this.answers[this.page]?.wasCustom ? " ✓" : "";
-		lines.push(`${otherCursor} ${otherIndex + 1}. Other (free-form)${otherChosen}`);
+		lines.push(
+			this.options.theme.fg(
+				otherSelected ? "accent" : "text",
+				`${otherCursor} ${otherIndex + 1}. Other (free-form)${otherChosen}`,
+			),
+		);
 		const answer = this.answers[this.page];
 		if (answer?.wasCustom)
 			lines.push(...labeledRaw("Answer", answer.answer, width, this.options.theme));
@@ -486,7 +505,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		const lines = [this.options.theme.fg("text", "Review answers")];
 		this.options.questions.forEach((question, index) => {
 			const answer = this.answers[index];
-			const cursor = this.reviewSelection === index ? "›" : " ";
+			const cursor = this.reviewSelection === index ? "→" : " ";
 			const header = sanitizeTerminalText(question.header) || `Question ${index + 1}`;
 			lines.push("");
 			lines.push(`${cursor} ${this.options.theme.fg("accent", header)}`);
