@@ -134,15 +134,17 @@ test("the Kit RPC runner preserves limits, ordering, and answer metadata", async
 	assert.ok(context.notifications.some(({ message }) => message.includes("4,000")));
 });
 
-test("the adapter uses safe display fallbacks without mutating selected option answers", async () => {
+test("the adapter sanitizes mixed display text without mutating raw domain answers", async () => {
 	const control = "\u001b[31m";
+	const rawHeader = `Visible${control}`;
+	const rawLabel = `Unsafe${control}`;
 	const unsafeQuestions: PlanModeQuestion[] = [
 		{
 			id: "unsafe",
-			header: control,
+			header: rawHeader,
 			question: control,
 			options: [
-				{ label: control, description: "First choice." },
+				{ label: rawLabel, description: "First choice." },
 				{ label: "Safe", description: "Second choice." },
 			],
 		},
@@ -159,10 +161,10 @@ test("the adapter uses safe display fallbacks without mutating selected option a
 		},
 	});
 	const answers = await askPlanModeQuestions(unsafeQuestions, context.ctx);
-	assert.equal(offeredTitle, "Question 1: Question 1");
-	assert.equal(offeredChoices[0], "1. Option 1 — First choice.");
-	assert.equal(answers?.[0]?.answer, control);
-	assert.equal(answers?.[0]?.header, control);
+	assert.equal(offeredTitle, "Visible: Question 1");
+	assert.equal(offeredChoices[0], "1. Unsafe — First choice.");
+	assert.equal(answers?.[0]?.answer, rawLabel);
+	assert.equal(answers?.[0]?.header, rawHeader);
 	assert.equal(answers?.[0]?.question, control);
 });
 

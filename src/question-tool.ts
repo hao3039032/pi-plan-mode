@@ -261,7 +261,8 @@ function mapQuestionnaireResult(
 }
 
 function displayText(value: string, fallback: string, sanitize: (value: string) => string): string {
-	return sanitize(value).trim() ? value : fallback;
+	const sanitized = sanitize(value);
+	return sanitized.trim() ? sanitized : fallback;
 }
 
 function answerFor(
