@@ -283,7 +283,7 @@ test("Review blocks incomplete submission and directs note edits back to questio
 });
 
 test("TUI preserves raw custom answers and notes while sanitizing editor rendering", async () => {
-	const unsafeAnswer = "raw\u001b]8;;https://evil.example\u0007text\u202ereversed";
+	const unsafeAnswer = "raw\u007f\u001b]8;;https://evil.example\u0007text\u202ereversed";
 	const unsafeNote = "note\u009bcontrol\u202aspoofed";
 	const { tui, running } = tuiRun([questions[0]]);
 	await tui.waitForOpen();
@@ -375,6 +375,35 @@ test("TUI abort signal closes the questionnaire without answers", async () => {
 	controller.abort();
 	assert.equal(await running, undefined);
 	assert.equal(tui.isOpen, false);
+});
+
+test("Other editor treats Backspace as deletion instead of raw text", async () => {
+	const { tui, running } = tuiRun([questions[0]]);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	tui.press("tui.select.down");
+	tui.press("tui.select.down");
+	tui.press("tui.select.confirm");
+	tui.type("wrongx");
+	tui.send("\u007f");
+	tui.press("tui.input.submit");
+	tui.press("tui.select.confirm");
+
+	assert.equal((await running)?.[0]?.answer, "wrong");
+});
+
+test("Optional note editor treats Backspace as deletion instead of raw text", async () => {
+	const { tui, running } = tuiRun([questions[0]]);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	tui.type("n");
+	tui.type("note!");
+	tui.send("\u007f");
+	tui.press("tui.input.submit");
+	tui.press("tui.select.confirm");
+	tui.press("tui.select.confirm");
+
+	assert.equal((await running)?.[0]?.note, "note");
 });
 
 test("Other editor rejects oversized input and forwards focus", async () => {

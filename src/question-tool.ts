@@ -674,6 +674,10 @@ class RawPreservingEditor implements Focusable {
 			this.flushPasteBuffer();
 			return;
 		}
+		if (matchesKey(data, Key.backspace)) {
+			this.editor.handleInput(data);
+			return;
+		}
 		const pasteStart = data.indexOf(BRACKETED_PASTE_START);
 		if (pasteStart >= 0) {
 			if (pasteStart > 0) this.editor.handleInput(data.slice(0, pasteStart));
