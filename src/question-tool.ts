@@ -327,7 +327,8 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
-		const lines = [...this.renderTabs(safeWidth), ""];
+		const border = this.options.theme.fg("accent", "─".repeat(safeWidth));
+		const lines = [border, ...this.renderTabs(safeWidth), ""];
 		if (this.page === this.options.questions.length) lines.push(...this.renderReview(safeWidth));
 		else lines.push(...this.renderQuestion(safeWidth));
 		if (this.message)
@@ -343,6 +344,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 				),
 				safeWidth,
 			),
+			border,
 		);
 		return lines.map((line) => truncateToWidth(line, safeWidth));
 	}

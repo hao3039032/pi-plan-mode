@@ -87,6 +87,16 @@ test("TUI previews future questions and navigates back before answering", async 
 	assert.equal(await running, undefined);
 });
 
+test("TUI frames the questionnaire with select-style separator borders", async () => {
+	const { tui, running } = tuiRun([questions[0]], 40);
+	await tui.waitForOpen();
+	const frame = tui.render();
+	assert.equal(frame[0], "─".repeat(40));
+	assert.equal(frame.at(-1), "─".repeat(40));
+	tui.dispose();
+	assert.equal(await running, undefined);
+});
+
 test("TUI uses numbered select styling and restores the recorded answer cursor", async () => {
 	const { tui, running } = tuiRun([questions[0]]);
 	await tui.waitForOpen();
