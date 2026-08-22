@@ -1,5 +1,14 @@
 # @narumitw/pi-plan-mode
 
+## 0.51.1
+
+### Patch Changes
+
+- 8540d0f: Simplify single-question TUI questionnaires with a plain header and immediate answer submission while retaining tabbed Review for multiple questions.
+- 5785cb4: Reuse Pi TUI Kit's questionnaire runner while preserving Plan mode answer and lifecycle behavior.
+- Updated dependencies [8540d0f]
+  - @narumitw/pi-tui-kit@0.57.1
+
 ## 0.51.0
 
 ### Minor Changes
