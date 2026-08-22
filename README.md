@@ -122,11 +122,14 @@ Tests and builds may still write ignored caches or build artifacts and may execu
 This is extension-level risk reduction, not an OS sandbox.
 
 `plan_mode_question` follows Codex's `request_user_input` pattern: the agent can ask 1-3 concise questions, each with meaningful options and a free-form Other path.
-In TUI mode, one question appears at a time with question tabs and a final Review tab.
+In TUI mode, a single question shows its header as plain muted text, submits as soon as its preset or custom answer is confirmed, and does not show tabs, Review, or question-navigation controls.
+Add an optional note with `n` before confirming a single preset answer.
+With two or three questions, one question appears at a time with question tabs and a final Review tab.
 Use Tab, Shift+Tab, left, or right to visit any question or Review, including unanswered future questions.
-Use up and down to choose an option, Enter to record it and advance, or `n` to record the highlighted option and open its optional note editor. Press `n` again on an answered item to edit or clear its note.
+Use up and down to choose an option, Enter to record it and advance, or `n` to record the highlighted option and open its optional note editor.
+Press `n` again on an answered item to edit or clear its note.
 Revisit a question to replace its answer; changing the chosen option clears its prior note.
-Review lists every answer and note, lets up and down select an answer for note editing, and submits the ordered payload only after every question is answered.
+Review lists every answer and note, blocks incomplete submission, and requires returning to a question to edit its answer or note.
 Custom answers and notes retain their raw submitted text in the tool result, while terminal rendering is sanitized.
 The TUI rejects either field above 4,000 characters instead of truncating it.
 RPC keeps the existing sequential `select` and `editor` dialogs because Pi RPC cannot render custom TUI components.
@@ -220,7 +223,7 @@ During implementation, it removes both the original implementation handoff and t
 
 ## 🛠️ Tools
 
-- `plan_mode_question` asks up to three structured questions, supports optional answer notes, and reviews the ordered result before TUI submission.
+- `plan_mode_question` asks up to three structured questions, supports optional answer notes, submits one answer directly, and reviews multiple answers before TUI submission.
 - `plan_mode_complete` records the complete approved Markdown plan and terminates the planning turn when called alone.
 
 ## ⚙️ Settings
