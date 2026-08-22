@@ -1,5 +1,11 @@
 # @narumitw/pi-plan-mode
 
+## 0.52.0
+
+### Minor Changes
+
+- 85d13c8: Coordinate Plan-mode activation through Workflow Mutex Protocol v1 so cooperating agent workflows cannot start in the same Pi session.
+
 ## 0.51.1
 
 ### Patch Changes
