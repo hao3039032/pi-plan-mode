@@ -1,5 +1,11 @@
 # @narumitw/pi-plan-mode
 
+## 0.51.0
+
+### Minor Changes
+
+- 416da47: Add tabbed TUI Plan questions with answer notes and final review.
+
 ## 0.50.1
 
 ### Patch Changes
