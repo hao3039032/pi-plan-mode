@@ -135,7 +135,7 @@ test("TUI applies legacy selector emphasis to borders, title, and selected optio
 	assert.equal(await running, undefined);
 });
 
-test("Review uses the same numbered selector emphasis as question options", async () => {
+test("Review renders plain summaries without selection affordances", async () => {
 	const foreground: Array<{ color: string; text: string }> = [];
 	const bold: string[] = [];
 	const tui = createTuiHarness({
@@ -158,14 +158,26 @@ test("Review uses the same numbered selector emphasis as question options", asyn
 	tui.setFocused(true);
 	tui.send("\u001b[C");
 	tui.send("\u001b[C");
+	foreground.length = 0;
+	bold.length = 0;
 	const frame = tui.render().join("\n");
-	assert.match(frame, /\n → 1\. Scope — Unanswered\n {3}2\. Tests — Unanswered/u);
-	assert.ok(
-		foreground.some(({ color, text }) => color === "accent" && text === "→ 1. Scope — Unanswered"),
-	);
-	assert.ok(foreground.some(({ color, text }) => color === "text" && text === "  2. Tests"));
+	assert.match(frame, /\n 1\. Scope — Unanswered\n 2\. Tests — Unanswered/u);
+	assert.doesNotMatch(frame, /→ [12]\./u);
+	assert.match(frame, /Enter submit/u);
+	assert.doesNotMatch(frame, /↑\/↓ select|n note/u);
+	assert.ok(foreground.some(({ color, text }) => color === "text" && text === "1. Scope"));
+	assert.ok(foreground.some(({ color, text }) => color === "text" && text === "2. Tests"));
 	assert.ok(foreground.some(({ color, text }) => color === "muted" && text === " — Unanswered"));
+	assert.equal(
+		foreground.some(
+			({ color, text }) => color === "accent" && /(?:→ )?[12]\. (?:Scope|Tests)/u.test(text),
+		),
+		false,
+	);
 	assert.ok(bold.includes("Review answers"));
+	const unchanged = tui.render().join("\n");
+	tui.press("tui.select.down");
+	assert.equal(tui.render().join("\n"), unchanged);
 	tui.dispose();
 	assert.equal(await running, undefined);
 });
@@ -216,7 +228,9 @@ test("TUI replaces answers, manages notes, accepts Other, and submits ordered ra
 	tui.press("tui.input.submit");
 	assert.match(tui.render().join("\n"), /Review answers[\s\S]*Broad[\s\S]*custom answer/u);
 
-	// Review selects answers for note add/edit/clear.
+	// Notes remain editable from their question page, not from the plain Review summary.
+	tui.send("\u001b[D");
+	tui.send("\u001b[D");
 	tui.type("n");
 	paste(tui, "draft note");
 	tui.press("tui.input.submit");
@@ -227,7 +241,9 @@ test("TUI replaces answers, manages notes, accepts Other, and submits ordered ra
 	tui.type("n");
 	paste(tui, "final note");
 	tui.press("tui.input.submit");
-	assert.match(tui.render().join("\n"), /→ 1\. Scope — Broad · Note: final note/u);
+	tui.send("\u001b[C");
+	tui.send("\u001b[C");
+	assert.match(tui.render().join("\n"), /1\. Scope — Broad · Note: final note/u);
 	tui.press("tui.select.confirm");
 
 	assert.deepEqual(await running, [
@@ -250,7 +266,7 @@ test("TUI replaces answers, manages notes, accepts Other, and submits ordered ra
 	]);
 });
 
-test("Review blocks incomplete submission and lets selected answer receive a note", async () => {
+test("Review blocks incomplete submission and directs note edits back to questions", async () => {
 	const { tui, running } = tuiRun();
 	await tui.waitForOpen();
 	tui.setFocused(true);
@@ -259,8 +275,9 @@ test("Review blocks incomplete submission and lets selected answer receive a not
 	tui.press("tui.select.confirm");
 	assert.match(tui.render().join("\n"), /Answer every question before submitting/u);
 	tui.press("tui.select.down");
+	assert.doesNotMatch(tui.render().join("\n"), /→ [12]\./u);
 	tui.type("n");
-	assert.match(tui.render().join("\n"), /Select an answer before adding a note/u);
+	assert.match(tui.render().join("\n"), /Return to a question to add or edit its note/u);
 	tui.press("tui.select.cancel");
 	assert.equal(await running, undefined);
 });
@@ -279,12 +296,14 @@ test("TUI preserves raw custom answers and notes while sanitizing editor renderi
 	assert.equal(answerDraft.includes("\u202e"), false);
 	assert.equal(answerDraft.includes("\u001b]8;;https://evil.example"), false);
 	tui.press("tui.input.submit");
+	tui.send("\u001b[D");
 	tui.type("n");
 	paste(tui, unsafeNote);
 	const noteDraft = tui.render().join("\n");
 	assert.equal(noteDraft.includes("\u009b"), false);
 	assert.equal(noteDraft.includes("\u202a"), false);
 	tui.press("tui.input.submit");
+	tui.send("\u001b[C");
 	const review = tui.render().join("\n");
 	assert.equal(review.includes("\u202e") || review.includes("\u202a"), false);
 	tui.press("tui.select.confirm");
@@ -310,10 +329,10 @@ test("editing an existing Other answer preserves its note", async () => {
 	tui.press("tui.select.confirm");
 	paste(tui, "first answer");
 	tui.press("tui.input.submit");
+	tui.send("\u001b[D");
 	tui.type("n");
 	paste(tui, "keep this note");
 	tui.press("tui.input.submit");
-	tui.send("\u001b[D");
 	tui.press("tui.select.confirm");
 	tui.send("\u0015");
 	paste(tui, "edited answer");

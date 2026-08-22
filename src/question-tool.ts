@@ -282,7 +282,6 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 	private readonly answers: Array<PlanModeQuestionAnswer | undefined>;
 	private readonly selectedOptions: number[];
 	private page = 0;
-	private reviewSelection = 0;
 	private editorKind: "answer" | "note" | undefined;
 	private message: string | undefined;
 	private finished = false;
@@ -342,7 +341,9 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 					"dim",
 					this.editorKind
 						? "Enter save · Esc/Ctrl+C cancel questionnaire"
-						: "Tab/Shift+Tab or ←/→ navigate · ↑/↓ select · Enter answer/submit · n note · Esc cancel",
+						: this.page === this.options.questions.length
+							? "Tab/Shift+Tab or ←/→ navigate · Enter submit · Esc cancel"
+							: "Tab/Shift+Tab or ←/→ navigate · ↑/↓ select · Enter answer · n note · Esc cancel",
 				),
 				contentWidth,
 			),
@@ -392,16 +393,18 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 			this.movePage(-1);
 			return;
 		}
+		const review = this.page === this.options.questions.length;
 		if (matchesKey(data, Key.up)) {
-			this.moveSelection(-1);
+			if (!review) this.moveSelection(-1);
 			return;
 		}
 		if (matchesKey(data, Key.down)) {
-			this.moveSelection(1);
+			if (!review) this.moveSelection(1);
 			return;
 		}
 		if (data.toLowerCase() === "n") {
-			this.editNote();
+			if (review) this.message = "Return to a question to add or edit its note.";
+			else this.editNote();
 			return;
 		}
 		if (matchesKey(data, Key.enter)) this.submitPage();
@@ -504,33 +507,18 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		const lines = [this.options.theme.fg("accent", this.options.theme.bold("Review answers")), ""];
 		this.options.questions.forEach((question, index) => {
 			const answer = this.answers[index];
-			const selected = this.reviewSelection === index;
-			const cursor = selected ? "→" : " ";
 			const header = sanitizeTerminalText(question.header) || `Question ${index + 1}`;
-			const label = `${cursor} ${index + 1}. ${header}`;
+			const label = `${index + 1}. ${header}`;
 			const summary = ` — ${inlineSummary(answer?.answer ?? "Unanswered")}${
 				answer?.note ? ` · Note: ${inlineSummary(answer.note)}` : ""
 			}`;
-			const line = selected
-				? this.options.theme.fg("accent", `${label}${summary}`)
-				: `${this.options.theme.fg("text", label)}${this.options.theme.fg("muted", summary)}`;
-			lines.push(...hardWrapWithIndent(line, width, visibleWidth(`${cursor} ${index + 1}. `)));
+			const line = `${this.options.theme.fg("text", label)}${this.options.theme.fg("muted", summary)}`;
+			lines.push(...hardWrapWithIndent(line, width, visibleWidth(`${index + 1}. `)));
 		});
-		if (this.editorKind === "note") {
-			lines.push("");
-			lines.push(this.options.theme.fg("accent", "Optional note"));
-			lines.push(...this.editor.render(width));
-		}
 		return lines;
 	}
 
 	private moveSelection(delta: number): void {
-		if (this.page === this.options.questions.length) {
-			this.reviewSelection =
-				(this.reviewSelection + delta + this.options.questions.length) %
-				this.options.questions.length;
-			return;
-		}
 		const optionCount = (this.options.questions[this.page]?.options.length ?? 0) + 1;
 		this.selectedOptions[this.page] =
 			((this.selectedOptions[this.page] ?? 0) + delta + optionCount) % optionCount;
@@ -570,25 +558,22 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 	}
 
 	private editNote(): void {
-		const review = this.page === this.options.questions.length;
-		const index = review ? this.reviewSelection : this.page;
+		const index = this.page;
 		let answer = this.answers[index];
-		if (!review) {
-			const question = this.options.questions[index];
-			const selected = this.selectedOptions[index] ?? 0;
-			if (question && selected === question.options.length && !answer?.wasCustom) {
-				this.beginEditor("answer", "");
-				return;
-			}
-			if (question && selected < question.options.length && answer?.optionIndex !== selected + 1) {
-				const option = question.options[selected];
-				if (option) {
-					answer = answerFor(question, option.label, {
-						wasCustom: false,
-						optionIndex: selected + 1,
-					});
-					this.answers[index] = answer;
-				}
+		const question = this.options.questions[index];
+		const selected = this.selectedOptions[index] ?? 0;
+		if (question && selected === question.options.length && !answer?.wasCustom) {
+			this.beginEditor("answer", "");
+			return;
+		}
+		if (question && selected < question.options.length && answer?.optionIndex !== selected + 1) {
+			const option = question.options[selected];
+			if (option) {
+				answer = answerFor(question, option.label, {
+					wasCustom: false,
+					optionIndex: selected + 1,
+				});
+				this.answers[index] = answer;
 			}
 		}
 		if (!answer) {
@@ -612,7 +597,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 			this.options.tui.requestRender();
 			return;
 		}
-		const index = this.page === this.options.questions.length ? this.reviewSelection : this.page;
+		const index = this.page;
 		if (this.editorKind === "answer") {
 			if (!value.trim()) {
 				this.editor.setText(value);
