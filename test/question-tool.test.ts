@@ -122,8 +122,14 @@ test("TUI applies legacy selector emphasis to borders, title, and selected optio
 	await tui.waitForOpen();
 	tui.render();
 	assert.ok(foreground.some(({ color, text }) => color === "border" && text === "─".repeat(60)));
-	assert.ok(foreground.some(({ color, text }) => color === "accent" && /→ 1\. Small/u.test(text)));
-	assert.ok(foreground.some(({ color, text }) => color === "accent" && text === "Only the bug."));
+	assert.ok(
+		foreground.some(
+			({ color, text }) => color === "accent" && text === "→ 1. Small — Only the bug.",
+		),
+	);
+	assert.ok(
+		foreground.some(({ color, text }) => color === "muted" && text === " — Include cleanup."),
+	);
 	assert.ok(bold.includes("How broad?"));
 	tui.dispose();
 	assert.equal(await running, undefined);
@@ -134,7 +140,7 @@ test("TUI uses numbered select styling and restores the recorded answer cursor",
 	await tui.waitForOpen();
 	tui.setFocused(true);
 	let frame = tui.render().join("\n");
-	assert.match(frame, /→ 1\. Small/u);
+	assert.match(frame, /→ 1\. Small — Only the bug\./u);
 	assert.doesNotMatch(frame, /[○●]/u);
 	tui.press("tui.select.down");
 	tui.press("tui.select.confirm");

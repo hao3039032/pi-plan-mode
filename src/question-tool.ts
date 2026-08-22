@@ -459,30 +459,29 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		question.options.forEach((option, index) => {
 			const selected = this.selectedOptions[this.page] === index;
 			const cursor = selected ? "→" : " ";
-			const chosen = this.answers[this.page]?.optionIndex === index + 1 ? " ✓" : "";
-			const label = `${cursor} ${index + 1}. ${sanitizeTerminalText(option.label)}${chosen}`;
-			lines.push(...hardWrap(this.options.theme.fg(selected ? "accent" : "text", label), width));
-			if (option.description) {
-				lines.push(
-					...hardWrap(
-						`    ${this.options.theme.fg(
-							selected ? "accent" : "muted",
-							sanitizeTerminalText(option.description),
-						)}`,
-						width,
-					),
-				);
-			}
+			const label = `${cursor} ${index + 1}. ${sanitizeTerminalText(option.label)}`;
+			const chosen = this.answers[this.page]?.optionIndex === index + 1;
+			const description = option.description
+				? ` — ${sanitizeTerminalText(option.description)}`
+				: "";
+			const line = selected
+				? this.options.theme.fg("accent", `${label}${chosen ? " ✓" : ""}${description}`)
+				: `${this.options.theme.fg("text", label)}${
+						chosen ? this.options.theme.fg("success", " ✓") : ""
+					}${description ? this.options.theme.fg("muted", description) : ""}`;
+			lines.push(...hardWrapWithIndent(line, width, visibleWidth(`${cursor} ${index + 1}. `)));
 		});
 		const otherIndex = question.options.length;
 		const otherSelected = this.selectedOptions[this.page] === otherIndex;
 		const otherCursor = otherSelected ? "→" : " ";
-		const otherChosen = this.answers[this.page]?.wasCustom ? " ✓" : "";
+		const otherLabel = `${otherCursor} ${otherIndex + 1}. Other (free-form)`;
+		const otherChosen = this.answers[this.page]?.wasCustom === true;
 		lines.push(
-			this.options.theme.fg(
-				otherSelected ? "accent" : "text",
-				`${otherCursor} ${otherIndex + 1}. Other (free-form)${otherChosen}`,
-			),
+			otherSelected
+				? this.options.theme.fg("accent", `${otherLabel}${otherChosen ? " ✓" : ""}`)
+				: `${this.options.theme.fg("text", otherLabel)}${
+						otherChosen ? this.options.theme.fg("success", " ✓") : ""
+					}`,
 		);
 		const answer = this.answers[this.page];
 		if (answer?.wasCustom)
@@ -887,6 +886,19 @@ function labeledRaw(label: string, value: string, width: number, theme: Theme): 
 	return lines.map((line, index) =>
 		index === 0 ? `${theme.fg("muted", prefix)}${line}` : `${" ".repeat(prefix.length)}${line}`,
 	);
+}
+
+function hardWrapWithIndent(value: string, width: number, indent: number): string[] {
+	const safeWidth = Math.max(1, width);
+	const safeIndent = Math.min(Math.max(0, indent), Math.max(0, safeWidth - 1));
+	const continuationWidth = Math.max(1, safeWidth - safeIndent);
+	const columns = visibleWidth(value);
+	if (columns <= safeWidth) return [value];
+	const output = [sliceByColumn(value, 0, safeWidth)];
+	for (let column = safeWidth; column < columns; column += continuationWidth) {
+		output.push(`${" ".repeat(safeIndent)}${sliceByColumn(value, column, continuationWidth)}`);
+	}
+	return output;
 }
 
 function hardWrap(value: string, width: number): string[] {
