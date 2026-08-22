@@ -219,7 +219,7 @@ test("TUI uses configured selector keybindings and legacy j/k aliases", async ()
 	tui.setFocused(true);
 	assert.match(
 		tui.render().join("\n"),
-		/w\/s navigate {2}x select {2}q cancel {2}t\/shift\+tab\/←→ questions {2}n note/u,
+		/w\/s navigate {2}x select {2}q\/ctrl\+c cancel {2}t\/shift\+tab\/←→ questions {2}n note/u,
 	);
 	tui.send("j");
 	assert.match(tui.render().join("\n"), /→ 2\. Broad/u);
@@ -231,8 +231,27 @@ test("TUI uses configured selector keybindings and legacy j/k aliases", async ()
 	tui.send("\u001b[D");
 	tui.send("x");
 	tui.send("x");
-	assert.match(tui.render().join("\n"), /x submit {2}q cancel/u);
+	assert.match(tui.render().join("\n"), /x submit {2}q\/ctrl\+c cancel/u);
+	tui.send("\n");
+	assert.equal(tui.isOpen, true);
+	assert.match(tui.render().join("\n"), /\[Review\]/u);
 	tui.send("q");
+	assert.equal(await running, undefined);
+});
+
+test("TUI keeps Ctrl+C as a hard cancel when it is not configured", async () => {
+	const tui = createTuiHarness({
+		keybindings: {
+			matches: (data, binding) => binding === "tui.select.cancel" && data === "q",
+			getKeys: (binding) => (binding === "tui.select.cancel" ? ["q"] : []),
+		},
+	});
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+	const running = askPlanModeQuestions([questions[0]], context.ctx);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	assert.match(tui.render().join("\n"), /q\/ctrl\+c cancel/u);
+	tui.send("\u0003");
 	assert.equal(await running, undefined);
 });
 

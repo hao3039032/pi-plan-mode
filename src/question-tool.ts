@@ -364,7 +364,9 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 	}
 
 	private isCancel(data: string): boolean {
-		return this.options.keybindings.matches(data, "tui.select.cancel");
+		return (
+			matchesKey(data, Key.ctrl("c")) || this.options.keybindings.matches(data, "tui.select.cancel")
+		);
 	}
 
 	private handleEditorInput(data: string): void {
@@ -389,7 +391,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 			if (!review) this.moveSelection(1);
 			return;
 		}
-		if (keybindings.matches(data, "tui.select.confirm") || data === "\n") {
+		if (keybindings.matches(data, "tui.select.confirm")) {
 			this.submitPage();
 			return;
 		}
@@ -409,7 +411,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 
 	private renderHints(): string {
 		const { keybindings, theme } = this.options;
-		const cancel = keybindingHint(theme, keybindings, "tui.select.cancel", "cancel");
+		const cancel = cancelHint(theme, keybindings);
 		if (this.editorKind) {
 			return [
 				keybindingHint(theme, keybindings, "tui.input.submit", "save"),
@@ -908,6 +910,14 @@ function keybindingHint(
 
 function rawKeyHint(theme: Theme, keys: string, description: string): string {
 	return `${theme.fg("dim", keys)}${theme.fg("muted", ` ${description}`)}`;
+}
+
+function cancelHint(theme: Theme, keybindings: KeybindingsManager): string {
+	return rawKeyHint(
+		theme,
+		formatHintKeys([...keybindings.getKeys("tui.select.cancel"), "ctrl+c"]),
+		"cancel",
+	);
 }
 
 function selectionNavigationKeys(keybindings: KeybindingsManager): string {
