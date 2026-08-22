@@ -402,6 +402,13 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 	private movePage(delta: number): void {
 		const pageCount = this.options.questions.length + 1;
 		this.page = (this.page + delta + pageCount) % pageCount;
+		const answer = this.answers[this.page];
+		const question = this.options.questions[this.page];
+		if (answer?.wasCustom && question) {
+			this.selectedOptions[this.page] = question.options.length;
+		} else if (answer?.optionIndex !== undefined) {
+			this.selectedOptions[this.page] = answer.optionIndex - 1;
+		}
 		this.message = undefined;
 	}
 
@@ -440,8 +447,8 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		lines.push("");
 		question.options.forEach((option, index) => {
 			const cursor = this.selectedOptions[this.page] === index ? "›" : " ";
-			const chosen = this.answers[this.page]?.optionIndex === index + 1 ? "●" : "○";
-			const label = `${cursor} ${chosen} ${sanitizeTerminalText(option.label)}`;
+			const chosen = this.answers[this.page]?.optionIndex === index + 1 ? " ✓" : "";
+			const label = `${cursor} ${index + 1}. ${sanitizeTerminalText(option.label)}${chosen}`;
 			lines.push(...hardWrap(this.options.theme.fg("text", label), width));
 			if (option.description) {
 				lines.push(
@@ -454,8 +461,8 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		});
 		const otherIndex = question.options.length;
 		const otherCursor = this.selectedOptions[this.page] === otherIndex ? "›" : " ";
-		const otherChosen = this.answers[this.page]?.wasCustom ? "●" : "○";
-		lines.push(`${otherCursor} ${otherChosen} Other (free-form)`);
+		const otherChosen = this.answers[this.page]?.wasCustom ? " ✓" : "";
+		lines.push(`${otherCursor} ${otherIndex + 1}. Other (free-form)${otherChosen}`);
 		const answer = this.answers[this.page];
 		if (answer?.wasCustom)
 			lines.push(...labeledRaw("Answer", answer.answer, width, this.options.theme));

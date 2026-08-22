@@ -87,6 +87,26 @@ test("TUI previews future questions and navigates back before answering", async 
 	assert.equal(await running, undefined);
 });
 
+test("TUI uses numbered select styling and restores the recorded answer cursor", async () => {
+	const { tui, running } = tuiRun([questions[0]]);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	let frame = tui.render().join("\n");
+	assert.match(frame, /› 1\. Small/u);
+	assert.doesNotMatch(frame, /[○●]/u);
+	tui.press("tui.select.down");
+	tui.press("tui.select.confirm");
+	tui.send("\u001b[D");
+	frame = tui.render().join("\n");
+	assert.match(frame, /› 2\. Broad ✓/u);
+	tui.press("tui.select.up");
+	tui.send("\u001b[C");
+	tui.send("\u001b[D");
+	assert.match(tui.render().join("\n"), /› 2\. Broad ✓/u);
+	tui.press("tui.select.cancel");
+	assert.equal(await running, undefined);
+});
+
 test("TUI replaces answers, manages notes, accepts Other, and submits ordered raw payload", async () => {
 	const { tui, running } = tuiRun();
 	await tui.waitForOpen();
