@@ -243,7 +243,13 @@ Successful session replacement relies on source-session shutdown to clean up and
 The coexistence guarantee is cooperative and applies only when every contender implements v1 on the characterized Pi runtime and shares its event bus and session-manager identity.
 A pre-v1, mixed-version, non-participating, forked, or otherwise uncharacterized counterpart remains unsupported for mutual exclusion.
 Plan mode does not identify, inspect, configure, start, stop, or depend on another extension.
-The reciprocal minimum package versions will be documented only after both products pass the coexistence release matrix.
+Guaranteed coexistence with Goal requires `@narumitw/pi-goal` `0.53.0` or newer and this package at `0.52.0` or newer on the characterized Pi `0.84.2` runtime.
+
+| Installation | Support |
+| --- | --- |
+| Plan mode without another workflow participant | Supported standalone behavior |
+| Plan mode `>=0.52.0` with Goal `>=0.53.0` on Pi `0.84.2` | Workflow Mutex v1 coexistence guarantee |
+| Either package below its floor, or another Pi runtime | Standalone behavior only; mutual exclusion unsupported |
 
 ## 🛠️ Tools
 
