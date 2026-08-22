@@ -161,6 +161,99 @@ test("Review blocks incomplete submission and lets selected answer receive a not
 	assert.equal(await running, undefined);
 });
 
+test("TUI preserves raw custom answers and notes while sanitizing editor rendering", async () => {
+	const unsafeAnswer = "raw\u001b]8;;https://evil.example\u0007text\u202ereversed";
+	const unsafeNote = "note\u009bcontrol\u202aspoofed";
+	const { tui, running } = tuiRun([questions[0]]);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	tui.press("tui.select.down");
+	tui.press("tui.select.down");
+	tui.press("tui.select.confirm");
+	paste(tui, unsafeAnswer);
+	const answerDraft = tui.render().join("\n");
+	assert.equal(answerDraft.includes("\u202e"), false);
+	assert.equal(answerDraft.includes("\u001b]8;;https://evil.example"), false);
+	tui.press("tui.input.submit");
+	tui.type("n");
+	paste(tui, unsafeNote);
+	const noteDraft = tui.render().join("\n");
+	assert.equal(noteDraft.includes("\u009b"), false);
+	assert.equal(noteDraft.includes("\u202a"), false);
+	tui.press("tui.input.submit");
+	const review = tui.render().join("\n");
+	assert.equal(review.includes("\u202e") || review.includes("\u202a"), false);
+	tui.press("tui.select.confirm");
+
+	assert.deepEqual(await running, [
+		{
+			id: "scope",
+			header: "Scope",
+			question: "How broad?",
+			answer: unsafeAnswer,
+			wasCustom: true,
+			note: unsafeNote,
+		},
+	]);
+});
+
+test("editing an existing Other answer preserves its note", async () => {
+	const { tui, running } = tuiRun([questions[0]]);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	tui.press("tui.select.down");
+	tui.press("tui.select.down");
+	tui.press("tui.select.confirm");
+	paste(tui, "first answer");
+	tui.press("tui.input.submit");
+	tui.type("n");
+	paste(tui, "keep this note");
+	tui.press("tui.input.submit");
+	tui.send("\u001b[D");
+	tui.press("tui.select.confirm");
+	tui.send("\u0015");
+	paste(tui, "edited answer");
+	tui.press("tui.input.submit");
+	tui.press("tui.select.confirm");
+
+	assert.equal((await running)?.[0]?.note, "keep this note");
+});
+
+test("narrow TUI rendering keeps every question and Review tab visible", async () => {
+	const longQuestions = [
+		{ ...questions[0], header: "LongHeader12" },
+		{ ...questions[1], header: "SecondHeader" },
+		{ ...questions[0], id: "risk", header: "ThirdHeader3" },
+	];
+	const { tui, running } = tuiRun(longQuestions, 24);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	for (let index = 0; index < longQuestions.length; index += 1) tui.send("\u001b[C");
+	const frame = stripVTControlCharacters(tui.render().join("\n"));
+	assert.match(frame, /LongHeader12/u);
+	assert.match(frame, /SecondHeader/u);
+	assert.match(frame, /ThirdHeader3/u);
+	assert.match(frame, /\[Review\]/u);
+	tui.dispose();
+	assert.equal(await running, undefined);
+});
+
+test("TUI abort signal closes the questionnaire without answers", async () => {
+	const controller = new AbortController();
+	const tui = createTuiHarness({ width: 60, rows: 30 });
+	const context = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		custom: tui.custom,
+		signal: controller.signal,
+	});
+	const running = askPlanModeQuestions(questions, context.ctx);
+	await tui.waitForOpen();
+	controller.abort();
+	assert.equal(await running, undefined);
+	assert.equal(tui.isOpen, false);
+});
+
 test("Other editor rejects oversized input and forwards focus", async () => {
 	const { tui, running } = tuiRun([questions[0]]);
 	await tui.waitForOpen();
@@ -173,6 +266,21 @@ test("Other editor rejects oversized input and forwards focus", async () => {
 	paste(tui, "x".repeat(MAX_PLAN_MODE_RESPONSE_LENGTH + 1));
 	tui.press("tui.input.submit");
 	assert.match(tui.render().join("\n"), /4,000 characters or fewer/u);
+	assert.equal(tui.isOpen, true);
+	tui.press("ctrl+c");
+	assert.equal(await running, undefined);
+});
+
+test("Note editor rejects oversized input and stays open", async () => {
+	const { tui, running } = tuiRun([questions[0]]);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	tui.type("n");
+	const oversized = "z".repeat(MAX_PLAN_MODE_RESPONSE_LENGTH + 1);
+	paste(tui, oversized);
+	tui.press("tui.input.submit");
+	const frame = tui.render().join("\n");
+	assert.match(frame, /Note must be 4,000 characters or fewer/u);
 	assert.equal(tui.isOpen, true);
 	tui.press("ctrl+c");
 	assert.equal(await running, undefined);

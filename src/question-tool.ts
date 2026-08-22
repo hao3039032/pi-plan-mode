@@ -16,6 +16,9 @@ import {
 export const PLAN_MODE_QUESTION_TOOL_NAME = "plan_mode_question";
 export const MAX_PLAN_MODE_RESPONSE_LENGTH = 4_000;
 
+const BRACKETED_PASTE_START = "\u001b[200~";
+const BRACKETED_PASTE_END = "\u001b[201~";
+
 export type PlanModeQuestionOption = {
 	label: string;
 	description?: string;
@@ -275,7 +278,7 @@ interface QuestionnaireOptions {
 
 export class PlanModeQuestionnaire implements Component, Focusable {
 	private readonly options: QuestionnaireOptions;
-	private readonly editor: Editor;
+	private readonly editor: RawPreservingEditor;
 	private readonly answers: Array<PlanModeQuestionAnswer | undefined>;
 	private readonly selectedOptions: number[];
 	private page = 0;
@@ -300,7 +303,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 				noMatch: (text) => options.theme.fg("warning", text),
 			},
 		};
-		this.editor = new Editor(options.tui, editorTheme, { paddingX: 0 });
+		this.editor = new RawPreservingEditor(options.tui, editorTheme);
 		this.editor.onChange = () => {
 			this.message = undefined;
 		};
@@ -324,7 +327,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 
 	render(width: number): string[] {
 		const safeWidth = Math.max(1, width);
-		const lines = [this.renderTabs(safeWidth), ""];
+		const lines = [...this.renderTabs(safeWidth), ""];
 		if (this.page === this.options.questions.length) lines.push(...this.renderReview(safeWidth));
 		else lines.push(...this.renderQuestion(safeWidth));
 		if (this.message)
@@ -402,7 +405,7 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		this.message = undefined;
 	}
 
-	private renderTabs(width: number): string {
+	private renderTabs(width: number): string[] {
 		const tabs = [
 			...this.options.questions.map((question, index) => {
 				const label = sanitizeTerminalText(question.header) || `Question ${index + 1}`;
@@ -411,7 +414,20 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 			}),
 			this.page === this.options.questions.length ? "[Review]" : "Review",
 		];
-		return truncateToWidth(this.options.theme.fg("accent", tabs.join("  ")), width, "…");
+		const lines: string[] = [];
+		let line = "";
+		for (const tab of tabs) {
+			const boundedTab = truncateToWidth(tab, width, "…");
+			const candidate = line ? `${line}  ${boundedTab}` : boundedTab;
+			if (line && visibleWidth(candidate) > width) {
+				lines.push(this.options.theme.fg("accent", line));
+				line = boundedTab;
+			} else {
+				line = candidate;
+			}
+		}
+		if (line) lines.push(this.options.theme.fg("accent", line));
+		return lines;
 	}
 
 	private renderQuestion(width: number): string[] {
@@ -576,7 +592,11 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 			}
 			const question = this.options.questions[index];
 			if (!question) return;
-			this.answers[index] = answerFor(question, value, { wasCustom: true });
+			const previous = this.answers[index];
+			this.answers[index] = answerFor(question, value, {
+				wasCustom: true,
+				note: previous?.wasCustom ? previous.note : undefined,
+			});
 			this.editor.setText("");
 			this.editorKind = undefined;
 			this.editor.focused = false;
@@ -605,6 +625,148 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 		this.editor.focused = false;
 		this.options.onDone(answers);
 	}
+}
+
+class RawPreservingEditor implements Focusable {
+	private readonly editor: Editor;
+	private readonly rawByMarker = new Map<string, string>();
+	private markerCodePoint = 0xe000;
+	private pasteBuffer: string | undefined;
+
+	constructor(tui: TUI, theme: EditorTheme) {
+		this.editor = new Editor(tui, theme, { paddingX: 0 });
+	}
+
+	get focused(): boolean {
+		return this.editor.focused;
+	}
+
+	set focused(value: boolean) {
+		this.editor.focused = value;
+	}
+
+	set onChange(handler: ((value: string) => void) | undefined) {
+		this.editor.onChange = handler ? () => handler(this.getExpandedText()) : undefined;
+	}
+
+	set onSubmit(handler: ((value: string) => void) | undefined) {
+		this.editor.onSubmit = handler ? (value) => handler(this.decode(value)) : undefined;
+	}
+
+	handleInput(data: string): void {
+		if (this.pasteBuffer !== undefined) {
+			this.pasteBuffer += data;
+			this.flushPasteBuffer();
+			return;
+		}
+		const pasteStart = data.indexOf(BRACKETED_PASTE_START);
+		if (pasteStart >= 0) {
+			if (pasteStart > 0) this.editor.handleInput(data.slice(0, pasteStart));
+			this.pasteBuffer = data.slice(pasteStart + BRACKETED_PASTE_START.length);
+			this.flushPasteBuffer();
+			return;
+		}
+		if (
+			[...data].some(
+				(character) => isUnsafeDirectEditorCharacter(character) || this.rawByMarker.has(character),
+			)
+		) {
+			this.editor.handleInput(this.encode(data));
+			return;
+		}
+		this.editor.handleInput(data);
+	}
+
+	render(width: number): string[] {
+		return this.editor
+			.render(width)
+			.map((line) =>
+				[...line].map((character) => (this.rawByMarker.has(character) ? " " : character)).join(""),
+			);
+	}
+
+	invalidate(): void {
+		this.editor.invalidate();
+	}
+
+	setText(value: string): void {
+		this.rawByMarker.clear();
+		this.markerCodePoint = 0xe000;
+		this.pasteBuffer = undefined;
+		this.editor.setText(this.encode(value));
+	}
+
+	getExpandedText(): string {
+		return this.decode(this.editor.getExpandedText());
+	}
+
+	private flushPasteBuffer(): void {
+		if (this.pasteBuffer === undefined) return;
+		const pasteEnd = this.pasteBuffer.indexOf(BRACKETED_PASTE_END);
+		if (pasteEnd < 0) return;
+		const raw = this.pasteBuffer.slice(0, pasteEnd);
+		const remaining = this.pasteBuffer.slice(pasteEnd + BRACKETED_PASTE_END.length);
+		this.pasteBuffer = undefined;
+		this.editor.handleInput(`${BRACKETED_PASTE_START}${this.encode(raw)}${BRACKETED_PASTE_END}`);
+		if (remaining) this.handleInput(remaining);
+	}
+
+	private encode(value: string): string {
+		const forbidden = new Set([
+			...value,
+			...this.editor.getExpandedText(),
+			...this.rawByMarker.keys(),
+		]);
+		return [...value]
+			.map((character) => {
+				if (!isUnsafeEditorCharacter(character) && !this.rawByMarker.has(character)) {
+					return character;
+				}
+				const marker = this.nextMarker(forbidden);
+				this.rawByMarker.set(marker, character);
+				forbidden.add(marker);
+				return marker;
+			})
+			.join("");
+	}
+
+	private decode(value: string): string {
+		return [...value].map((character) => this.rawByMarker.get(character) ?? character).join("");
+	}
+
+	private nextMarker(forbidden: ReadonlySet<string>): string {
+		for (;;) {
+			if (this.markerCodePoint === 0xf900) this.markerCodePoint = 0xf0000;
+			if (this.markerCodePoint === 0xffffe) this.markerCodePoint = 0x100000;
+			if (this.markerCodePoint > 0x10fffd) {
+				throw new Error("Plan-mode editor exhausted its safe input markers.");
+			}
+			const marker = String.fromCodePoint(this.markerCodePoint++);
+			if (!forbidden.has(marker)) return marker;
+		}
+	}
+}
+
+function isUnsafeDirectEditorCharacter(character: string): boolean {
+	const codePoint = character.codePointAt(0) ?? 0;
+	return (
+		(codePoint >= 0x7f && codePoint <= 0x9f) ||
+		codePoint === 0x2028 ||
+		codePoint === 0x2029 ||
+		isBidiControl(codePoint)
+	);
+}
+
+function isUnsafeEditorCharacter(character: string): boolean {
+	const codePoint = character.codePointAt(0) ?? 0;
+	return (
+		character !== "\n" &&
+		(codePoint <= 0x1f ||
+			(codePoint >= 0x7f && codePoint <= 0x9f) ||
+			codePoint === 0x2028 ||
+			codePoint === 0x2029 ||
+			isBidiControl(codePoint))
+	);
 }
 
 function answerFor(
