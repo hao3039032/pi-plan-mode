@@ -245,6 +245,13 @@ test("implementation transition persists active state before a busy follow-up an
 	assert.equal(activeState.activeImplementation?.source, "plan_mode_complete");
 	assert.match(activeState.activeImplementation?.id ?? "", /^[0-9a-f-]{36}$/u);
 	assert.ok((activeState.activeImplementation?.startedAt ?? -1) >= 0);
+	const releasedAttempt = {
+		session: (context.ctx as unknown as { sessionManager: object }).sessionManager,
+		group: "agent-workflow",
+		busy: false,
+	};
+	mock.eventBus.emit("workflow:mutex:v1", releasedAttempt);
+	assert.equal(releasedAttempt.busy, false);
 
 	const sendsBeforeRepeat = mock.sentUserMessages.length;
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
@@ -276,6 +283,13 @@ test("failed implementation delivery restores ready state without retained imple
 	assert.equal(restored?.latestPlan, PLAN);
 	assert.equal(restored?.activeImplementation, undefined);
 	assert.match(context.notifications.at(-1)?.message ?? "", /no longer active/);
+	const retainedAttempt = {
+		session: (context.ctx as unknown as { sessionManager: object }).sessionManager,
+		group: "agent-workflow",
+		busy: false,
+	};
+	mock.eventBus.emit("workflow:mutex:v1", retainedAttempt);
+	assert.equal(retainedAttempt.busy, true);
 });
 
 test("a failed superseding prompt restores the exact active implementation", async () => {

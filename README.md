@@ -15,6 +15,7 @@ This independently installable extension adds a Codex-like `/plan` collaboration
 - Starts implementation in the planning session or a fresh linked session with the exact approved plan.
 - Persists Plan state and one saved plan across resume and compaction.
 - Exposes statusline state and configurable tool visibility, export destination, handoff behavior, shortcut, and thinking level.
+- Cooperates anonymously with Workflow Mutex Protocol v1 participants so only one agent workflow starts in a session.
 
 ## 📦 Install
 
@@ -220,6 +221,29 @@ During implementation, it removes both the original implementation handoff and t
 ```text
 /plan exit
 ```
+
+## 🤝 Workflow coexistence
+
+Plan mode is independently installable and keeps its standalone behavior when no other protocol participant is present.
+On the characterized Pi `0.84.2` runtime, it participates in the anonymous `workflow:mutex:v1` `agent-workflow` group.
+It holds the group while Planning is active, while a completed plan awaits review, and while revision is underway.
+Saved plans and ordinary implementation after Plan handoff do not hold the group.
+
+Every inactive start performs one final synchronous admission after asynchronous preflight and before changing Plan state, persistence, prompts, tools, thinking level, queues, or status.
+If another participant is active, TUI and RPC show an anonymous warning that another workflow is active.
+Print and JSON direct routes throw the same anonymous error before mutation.
+Launch-menu, selected-tool, shortcut, startup-flag, active-implementation **Start a new plan**, and restored activation use the same admission boundary.
+A rejected selected-tool launch does not save its draft choices.
+
+Restored active Plan state acquires before restoring restrictive tools, thinking, status, or model hooks.
+If restoration is busy, Plan mode stays non-running, leaves persisted history untouched, does not alter active tools, and requires a later reload or explicit new start after the other workflow ends.
+Planning-session cancellation during a fresh implementation preflight keeps the source Plan and its ownership.
+Successful session replacement relies on source-session shutdown to clean up and release; the destination's ordinary active implementation does not acquire the Plan mutex.
+
+The coexistence guarantee is cooperative and applies only when every contender implements v1 on the characterized Pi runtime and shares its event bus and session-manager identity.
+A pre-v1, mixed-version, non-participating, forked, or otherwise uncharacterized counterpart remains unsupported for mutual exclusion.
+Plan mode does not identify, inspect, configure, start, stop, or depend on another extension.
+The reciprocal minimum package versions will be documented only after both products pass the coexistence release matrix.
 
 ## 🛠️ Tools
 
