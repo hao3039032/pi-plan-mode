@@ -135,6 +135,41 @@ test("TUI applies legacy selector emphasis to borders, title, and selected optio
 	assert.equal(await running, undefined);
 });
 
+test("Review uses the same numbered selector emphasis as question options", async () => {
+	const foreground: Array<{ color: string; text: string }> = [];
+	const bold: string[] = [];
+	const tui = createTuiHarness({
+		width: 60,
+		rows: 30,
+		theme: {
+			fg: (color, text) => {
+				foreground.push({ color: String(color), text });
+				return text;
+			},
+			bold: (text) => {
+				bold.push(text);
+				return text;
+			},
+		},
+	});
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+	const running = askPlanModeQuestions(questions, context.ctx);
+	await tui.waitForOpen();
+	tui.setFocused(true);
+	tui.send("\u001b[C");
+	tui.send("\u001b[C");
+	const frame = tui.render().join("\n");
+	assert.match(frame, /\n → 1\. Scope — Unanswered\n {3}2\. Tests — Unanswered/u);
+	assert.ok(
+		foreground.some(({ color, text }) => color === "accent" && text === "→ 1. Scope — Unanswered"),
+	);
+	assert.ok(foreground.some(({ color, text }) => color === "text" && text === "  2. Tests"));
+	assert.ok(foreground.some(({ color, text }) => color === "muted" && text === " — Unanswered"));
+	assert.ok(bold.includes("Review answers"));
+	tui.dispose();
+	assert.equal(await running, undefined);
+});
+
 test("TUI uses numbered select styling and restores the recorded answer cursor", async () => {
 	const { tui, running } = tuiRun([questions[0]]);
 	await tui.waitForOpen();
@@ -192,6 +227,7 @@ test("TUI replaces answers, manages notes, accepts Other, and submits ordered ra
 	tui.type("n");
 	paste(tui, "final note");
 	tui.press("tui.input.submit");
+	assert.match(tui.render().join("\n"), /→ 1\. Scope — Broad · Note: final note/u);
 	tui.press("tui.select.confirm");
 
 	assert.deepEqual(await running, [

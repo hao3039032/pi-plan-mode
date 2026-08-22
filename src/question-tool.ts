@@ -501,17 +501,20 @@ export class PlanModeQuestionnaire implements Component, Focusable {
 	}
 
 	private renderReview(width: number): string[] {
-		const lines = [this.options.theme.fg("text", "Review answers")];
+		const lines = [this.options.theme.fg("accent", this.options.theme.bold("Review answers")), ""];
 		this.options.questions.forEach((question, index) => {
 			const answer = this.answers[index];
-			const cursor = this.reviewSelection === index ? "→" : " ";
+			const selected = this.reviewSelection === index;
+			const cursor = selected ? "→" : " ";
 			const header = sanitizeTerminalText(question.header) || `Question ${index + 1}`;
-			lines.push("");
-			lines.push(`${cursor} ${this.options.theme.fg("accent", header)}`);
-			lines.push(
-				...labeledRaw("Answer", answer?.answer ?? "Unanswered", width, this.options.theme),
-			);
-			if (answer?.note) lines.push(...labeledRaw("Note", answer.note, width, this.options.theme));
+			const label = `${cursor} ${index + 1}. ${header}`;
+			const summary = ` — ${inlineSummary(answer?.answer ?? "Unanswered")}${
+				answer?.note ? ` · Note: ${inlineSummary(answer.note)}` : ""
+			}`;
+			const line = selected
+				? this.options.theme.fg("accent", `${label}${summary}`)
+				: `${this.options.theme.fg("text", label)}${this.options.theme.fg("muted", summary)}`;
+			lines.push(...hardWrapWithIndent(line, width, visibleWidth(`${cursor} ${index + 1}. `)));
 		});
 		if (this.editorKind === "note") {
 			lines.push("");
@@ -877,6 +880,10 @@ function isBidiControl(codePoint: number): boolean {
 		(codePoint >= 0x202a && codePoint <= 0x202e) ||
 		(codePoint >= 0x2066 && codePoint <= 0x2069)
 	);
+}
+
+function inlineSummary(value: string): string {
+	return value.split("\n").map(sanitizeTerminalText).join(" ↵ ");
 }
 
 function labeledRaw(label: string, value: string, width: number, theme: Theme): string[] {
