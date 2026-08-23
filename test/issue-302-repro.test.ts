@@ -36,30 +36,26 @@ test("issue 302: history-only implementation stays ordinary context when Plan Mo
 		{ messages: implementationMessages },
 		context.ctx,
 	)) as { messages: unknown[] };
-	assert.deepEqual(inactiveContext.messages, implementationMessages);
+	assert.match(JSON.stringify(inactiveContext.messages[0]), /CONTRACT v1: NORMAL/u);
+	assert.deepEqual(inactiveContext.messages.slice(1), implementationMessages);
 
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), "plan active");
-	assert.deepEqual(mock.rawPi.getActiveTools(), [
-		"bash",
-		"read",
-		"plan_mode_question",
-		"plan_mode_complete",
-	]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "custom"]);
 
 	const beforeStart = mock.events.get("before_agent_start")?.[0];
 	assert.ok(beforeStart);
-	const promptResult = beforeStart({ systemPrompt: "base" }, context.ctx) as {
-		systemPrompt?: string;
-	};
-	assert.match(promptResult.systemPrompt ?? "", /You are in Plan Mode/);
-	assert.match(promptResult.systemPrompt ?? "", /plan_mode_complete/);
+	const promptResult = beforeStart({ systemPrompt: "base" }, context.ctx) as
+		| { systemPrompt?: string }
+		| undefined;
+	assert.equal(promptResult?.systemPrompt, undefined);
 
 	const activeMessages = [...implementationMessages, { role: "user", content: "continue" }];
 	const activeContext = (await contextHook({ messages: activeMessages }, context.ctx)) as {
 		messages: unknown[];
 	};
 
-	assert.deepEqual(activeContext.messages, activeMessages);
+	assert.match(JSON.stringify(activeContext.messages[0]), /CONTRACT v1: PLAN/u);
+	assert.deepEqual(activeContext.messages.slice(1), activeMessages);
 	assert.match(JSON.stringify(activeContext.messages), /Implement the plan\./);
 });

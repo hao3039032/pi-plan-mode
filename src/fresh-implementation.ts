@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { PLAN_HISTORY_IMPLEMENTATION_PROMPT } from "./message-transform.js";
+import { createModeContractMessage } from "./mode-contract.js";
 import type { ImplementationPlanRetention } from "./settings.js";
 import type { PlanCompletionSource, PlanModeState } from "./state.js";
 
@@ -121,17 +122,22 @@ export async function startFreshImplementationSession(
 	try {
 		result = await ctx.newSession({
 			...(parentSession ? { parentSession } : {}),
-			...(destinationState
-				? {
-						setup: async (sessionManager) => {
-							try {
-								sessionManager.appendCustomEntry(request.stateEntryType, destinationState);
-							} catch (error: unknown) {
-								setupError = safeErrorDetail(error);
-							}
-						},
+			setup: async (sessionManager) => {
+				try {
+					const contract = createModeContractMessage("normal");
+					sessionManager.appendCustomMessageEntry(
+						contract.customType,
+						contract.content,
+						contract.display,
+						contract.details,
+					);
+					if (destinationState) {
+						sessionManager.appendCustomEntry(request.stateEntryType, destinationState);
 					}
-				: {}),
+				} catch (error: unknown) {
+					setupError = safeErrorDetail(error);
+				}
+			},
 			withSession: async (replacementCtx) => {
 				if (setupError) {
 					recoverSetupFailure(replacementCtx, handoff, setupError);

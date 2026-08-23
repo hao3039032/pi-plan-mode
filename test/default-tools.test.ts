@@ -1,28 +1,77 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 import { test } from "vitest";
 import {
 	builtinTool,
-	createCustomSelectorHarness,
 	createMockContext,
 	createMockPi,
 	extensionTool,
 } from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
 
-const REQUIRED_PLAN_TOOLS = ["plan_mode_question", "plan_mode_complete"];
+const HELPERS = ["plan_mode_question", "plan_mode_complete"];
 
-test("fresh Plan mode uses configured default tools and restores previous tools", async () => {
+async function start(mock: ReturnType<typeof createMockPi>, context = createMockContext()) {
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	return context;
+}
+
+async function callTool(
+	mock: ReturnType<typeof createMockPi>,
+	context: ReturnType<typeof createMockContext>,
+	toolName: string,
+	input: unknown = {},
+) {
+	return mock.events.get("tool_call")?.[0]?.({ toolName, input }, context.ctx);
+}
+
+test("session startup appends helpers once and every Plan transition keeps the exact baseline", async () => {
+	const baseline = ["read", "bash", "edit", "write", "custom", ...HELPERS];
+	const mock = createMockPi({
+		activeTools: ["read", "bash", "edit", "write", "custom"],
+		allTools: [
+			builtinTool("read"),
+			builtinTool("bash"),
+			builtinTool("edit"),
+			builtinTool("write"),
+			extensionTool("custom"),
+		],
+	});
+	const writes: string[][] = [];
+	const setActiveTools = mock.rawPi.setActiveTools.bind(mock.rawPi);
+	mock.rawPi.setActiveTools = (names) => {
+		writes.push([...names]);
+		setActiveTools(names);
+	};
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const context = createMockContext();
+
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
+	assert.deepEqual(writes, [baseline]);
+	await mock.events.get("session_start")?.[0]?.({ reason: "reload" }, context.ctx);
+	assert.deepEqual(writes, [baseline]);
+
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
+	await mock.commands.get("plan")?.handler("exit", context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
+	await mock.events.get("session_shutdown")?.[0]?.({ reason: "quit" }, context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
+	assert.deepEqual(writes, [baseline]);
+});
+
+test("configured Plan tools are an allowlist over active tools, not an activation request", async () => {
 	await withAgentDir(async (agentDir) => {
+		const settingsPath = join(agentDir, "pi-plan-mode.json");
 		await writeFile(
-			join(agentDir, "pi-plan-mode.json"),
-			JSON.stringify({
-				defaultPlanTools: ["bash", "custom", "write", "missing", "bash"],
-			}),
+			settingsPath,
+			JSON.stringify({ defaultPlanTools: ["bash", "custom", "write", "missing"] }),
 		);
+		const baseline = ["read", "write", ...HELPERS];
 		const mock = createMockPi({
 			activeTools: ["read", "write"],
 			allTools: [
@@ -33,351 +82,130 @@ test("fresh Plan mode uses configured default tools and restores previous tools"
 			],
 		});
 		planMode(mock.pi);
-		const context = createMockContext();
+		const context = await start(mock);
 
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("start", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["bash", "custom", ...REQUIRED_PLAN_TOOLS]);
-		const hook = mock.events.get("tool_call")?.[0];
-		assert.equal(
-			await hook?.({ toolName: "custom", input: { arbitrary: { nested: true } } }, context.ctx),
-			undefined,
-		);
-
-		await mock.commands.get("plan")?.handler("exit", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
-	});
-});
-
-test("missing and empty default tool settings remain distinct", async () => {
-	await withAgentDir(async (agentDir) => {
-		const allTools = [
-			builtinTool("read"),
-			builtinTool("bash"),
-			builtinTool("grep"),
-			builtinTool("write"),
-			extensionTool("custom"),
-		];
-		const missing = createMockPi({ activeTools: ["write"], allTools });
-		planMode(missing.pi);
-		const missingContext = createMockContext();
-		await missing.events.get("session_start")?.[0]?.({}, missingContext.ctx);
-		await missing.commands.get("plan")?.handler("start", missingContext.ctx);
-		assert.deepEqual(missing.rawPi.getActiveTools(), [
-			"bash",
-			"grep",
-			"read",
-			...REQUIRED_PLAN_TOOLS,
-		]);
-
-		await writeFile(join(agentDir, "pi-plan-mode.json"), JSON.stringify({ defaultPlanTools: [] }));
-		const empty = createMockPi({ activeTools: ["write"], allTools });
-		planMode(empty.pi);
-		const emptyContext = createMockContext();
-		await empty.events.get("session_start")?.[0]?.({}, emptyContext.ctx);
-		await empty.commands.get("plan")?.handler("start", emptyContext.ctx);
-		assert.deepEqual(empty.rawPi.getActiveTools(), REQUIRED_PLAN_TOOLS);
-	});
-});
-
-test("explicit defaults stay fail closed when tool metadata is unavailable", async () => {
-	await withAgentDir(async (agentDir) => {
-		const settingsPath = join(agentDir, "pi-plan-mode.json");
-		await writeFile(settingsPath, JSON.stringify({ defaultPlanTools: [] }));
-		const explicit = createMockPi({ activeTools: ["write"], allTools: [] });
-		planMode(explicit.pi);
-		const explicitContext = createMockContext();
-		await explicit.events.get("session_start")?.[0]?.({}, explicitContext.ctx);
-		await explicit.commands.get("plan")?.handler("start", explicitContext.ctx);
-		assert.deepEqual(explicit.rawPi.getActiveTools(), REQUIRED_PLAN_TOOLS);
-
-		await rm(settingsPath);
-		const fallback = createMockPi({ activeTools: ["write"], allTools: [] });
-		planMode(fallback.pi);
-		const fallbackContext = createMockContext();
-		await fallback.events.get("session_start")?.[0]?.({}, fallbackContext.ctx);
-		await fallback.commands.get("plan")?.handler("start", fallbackContext.ctx);
-		assert.deepEqual(fallback.rawPi.getActiveTools(), ["read", "bash", ...REQUIRED_PLAN_TOOLS]);
-	});
-});
-
-test("restored session tool selections override configured defaults", async () => {
-	await withAgentDir(async (agentDir) => {
-		await writeFile(
-			join(agentDir, "pi-plan-mode.json"),
-			JSON.stringify({ defaultPlanTools: ["bash", "custom"] }),
-		);
-		const allTools = [
-			builtinTool("read"),
-			builtinTool("bash"),
-			builtinTool("grep"),
-			extensionTool("custom"),
-		];
-
-		for (const { data, expected } of [
-			{
-				data: { enabled: true, awaitingAction: false, selectedToolNames: ["read"] },
-				expected: ["read", ...REQUIRED_PLAN_TOOLS],
-			},
-			{
-				data: { enabled: true, awaitingAction: false, selectedToolNames: [] },
-				expected: REQUIRED_PLAN_TOOLS,
-			},
-			{
-				data: {
-					enabled: true,
-					awaitingAction: false,
-					selectedToolKeys: ["grep\u001fbuiltin"],
-				},
-				expected: ["grep", ...REQUIRED_PLAN_TOOLS],
-			},
-		]) {
-			const mock = createMockPi({ activeTools: ["write"], allTools });
-			planMode(mock.pi);
-			const stateEntry = { type: "custom", customType: "plan-mode-state", data };
-			const context = createMockContext({
-				sessionManager: {
-					getBranch: () => [stateEntry],
-					getEntries: () => [stateEntry],
-				},
-			});
-
-			await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-			assert.deepEqual(mock.rawPi.getActiveTools(), expected);
+		assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
+		for (const name of ["read", "bash", "custom", "write", "missing"]) {
+			const result = (await callTool(mock, context, name)) as { block?: boolean } | undefined;
+			assert.equal(result?.block, true, name);
 		}
-	});
-});
-
-test("settings reload resets removed or invalid configured defaults", async () => {
-	await withAgentDir(async (agentDir) => {
-		const settingsPath = join(agentDir, "pi-plan-mode.json");
-		await writeFile(settingsPath, JSON.stringify({ defaultPlanTools: ["bash"] }));
-		const allTools = [
-			builtinTool("read"),
-			builtinTool("bash"),
-			builtinTool("grep"),
-			builtinTool("write"),
-		];
-		const mock = createMockPi({ activeTools: ["write"], allTools });
-		planMode(mock.pi);
-		const context = createMockContext();
-
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("start", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["bash", ...REQUIRED_PLAN_TOOLS]);
-		await mock.commands.get("plan")?.handler("exit", context.ctx);
-
-		await rm(settingsPath);
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("start", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["bash", "grep", "read", ...REQUIRED_PLAN_TOOLS]);
-		await mock.commands.get("plan")?.handler("exit", context.ctx);
-
-		await writeFile(settingsPath, JSON.stringify({ defaultPlanTools: "read" }));
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("start", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["bash", "grep", "read", ...REQUIRED_PLAN_TOOLS]);
-		assert.match(context.notifications.at(-2)?.message ?? "", /settings ignored/i);
-	});
-});
-
-test("configured names follow effective sources without dynamic auto-activation", async () => {
-	await withAgentDir(async (agentDir) => {
-		await writeFile(
-			join(agentDir, "pi-plan-mode.json"),
-			JSON.stringify({ defaultPlanTools: ["read", "late"] }),
+		assert.deepEqual(
+			(JSON.parse(await readFile(settingsPath, "utf8")) as { defaultPlanTools: string[] })
+				.defaultPlanTools,
+			["bash", "custom", "write", "missing"],
 		);
-		const allTools = [extensionTool("read"), builtinTool("bash"), builtinTool("write")];
-		const mock = createMockPi({ activeTools: ["write"], allTools });
-		planMode(mock.pi);
-		const context = createMockContext();
-
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("start", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
-
-		allTools.push(extensionTool("late"));
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
-		await mock.commands.get("plan")?.handler("exit", context.ctx);
-		await mock.commands.get("plan")?.handler("start", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["late", "read", ...REQUIRED_PLAN_TOOLS]);
 	});
 });
 
-test("the tool selector persists a session override and shutdown restores prior tools", async () => {
-	await withAgentDir(async (agentDir) => {
-		await writeFile(
-			join(agentDir, "pi-plan-mode.json"),
-			JSON.stringify({ defaultPlanTools: ["bash", "custom"] }),
-		);
-		const allTools = [
+test("active selected custom tools execute while deselected and mutating tools fail closed", async () => {
+	const baseline = ["read", "bash", "write", "custom", ...HELPERS];
+	const mock = createMockPi({
+		activeTools: ["read", "bash", "write", "custom"],
+		allTools: [
 			builtinTool("read"),
 			builtinTool("bash"),
 			builtinTool("write"),
 			extensionTool("custom"),
-		];
-		const mock = createMockPi({ activeTools: ["write"], allTools });
-		planMode(mock.pi);
-		let selectedRead = false;
-		const context = createMockContext({
-			hasUI: true,
-			select: async (_title: unknown, choices: string[]) => {
-				if (selectedRead) return "Done — start Plan mode";
-				selectedRead = true;
-				return choices.find((choice) => choice === "read");
-			},
-		});
-
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("tools", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), [
-			"bash",
-			"read",
-			"custom",
-			...REQUIRED_PLAN_TOOLS,
-		]);
-		const persisted = mock.entries.at(-1);
-		assert.ok(persisted);
-		assert.deepEqual((persisted.data as { selectedToolNames?: string[] }).selectedToolNames, [
-			"bash",
-			"custom",
-			"read",
-		]);
-
-		await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["write"]);
-
-		const resumed = createMockPi({ activeTools: ["write"], allTools });
-		planMode(resumed.pi);
-		const stateEntry = { type: "custom", ...persisted };
-		const resumedContext = createMockContext({
-			sessionManager: {
-				getBranch: () => [stateEntry],
-				getEntries: () => [stateEntry],
-			},
-		});
-		await resumed.events.get("session_start")?.[0]?.({}, resumedContext.ctx);
-		assert.deepEqual(resumed.rawPi.getActiveTools(), [
-			"bash",
-			"read",
-			"custom",
-			...REQUIRED_PLAN_TOOLS,
-		]);
+		],
 	});
+	planMode(mock.pi, {
+		readSettings: async () => ({
+			kind: "loaded" as const,
+			settings: { thinkingLevel: "inherit" as const, defaultPlanTools: ["bash", "custom"] },
+		}),
+	});
+	const context = await start(mock);
+
+	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
+	assert.equal(await callTool(mock, context, "custom"), undefined);
+	assert.equal(await callTool(mock, context, "bash", { command: "git status --short" }), undefined);
+	for (const name of ["read", "write", "update_plan"]) {
+		const result = (await callTool(mock, context, name)) as { block?: boolean } | undefined;
+		assert.equal(result?.block, true, name);
+	}
 });
 
-test("the pre-start tool selector keeps the cursor on a draft toggle", async () => {
-	await withAgentDir(async (agentDir) => {
-		await writeFile(
-			join(agentDir, "pi-plan-mode.json"),
-			JSON.stringify({ defaultPlanTools: ["bash", "custom"] }),
-		);
-		const allTools = [
-			builtinTool("read"),
-			builtinTool("bash"),
-			builtinTool("write"),
-			extensionTool("custom"),
-		];
-		const mock = createMockPi({ activeTools: ["write"], allTools });
-		planMode(mock.pi);
-		let customCalled = false;
-		const context = createMockContext({
-			hasUI: true,
-			custom: async (factory: unknown) => {
-				customCalled = true;
-				const harness = createCustomSelectorHarness(factory);
-				harness.handleInput("tui.select.down");
-				harness.handleInput("tui.select.confirm");
-				await harness.waitForPending();
-				assert.ok(harness.render().some((line) => line.includes("› [x] read")));
-				harness.handleInput("tui.select.cancel");
-				return harness.result;
-			},
+test("automatic and explicit-empty policy defaults remain distinct without changing schemas", async () => {
+	const allTools = [builtinTool("read"), builtinTool("bash"), builtinTool("write")];
+	for (const [configured, allowed] of [
+		[undefined, ["read", "bash"]],
+		[[], []],
+	] as const) {
+		const mock = createMockPi({ activeTools: ["read", "bash", "write"], allTools });
+		planMode(mock.pi, {
+			readSettings: async () => ({
+				kind: "loaded" as const,
+				settings: {
+					thinkingLevel: "inherit" as const,
+					...(configured === undefined ? {} : { defaultPlanTools: [...configured] }),
+				},
+			}),
 		});
-
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("tools", context.ctx);
-
-		assert.equal(customCalled, true);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["write"]);
-		assert.equal(mock.entries.length, 0);
-	});
+		const context = await start(mock);
+		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "write", ...HELPERS]);
+		for (const name of ["read", "bash"]) {
+			const result = (await callTool(
+				mock,
+				context,
+				name,
+				name === "bash" ? { command: "git status --short" } : {},
+			)) as { block?: boolean } | undefined;
+			assert.equal(
+				result?.block,
+				allowed.some((candidate) => candidate === name) ? undefined : true,
+				name,
+			);
+		}
+	}
 });
 
-test("the Plan-mode tool selector searches metadata and toggles the stable tool name", async () => {
-	await withAgentDir(async (agentDir) => {
-		await writeFile(
-			join(agentDir, "pi-plan-mode.json"),
-			JSON.stringify({ defaultPlanTools: ["bash"] }),
-		);
-		const allTools = [
-			builtinTool("read"),
-			builtinTool("bash"),
-			builtinTool("write"),
-			{ ...extensionTool("custom"), description: "Remote inspection helper" },
-		];
-		const mock = createMockPi({ activeTools: ["write"], allTools });
-		planMode(mock.pi);
-		let customCalled = false;
-		const context = createMockContext({
-			hasUI: true,
-			custom: async (factory: unknown) => {
-				customCalled = true;
-				const harness = createCustomSelectorHarness(factory, 60);
-				for (const input of ["r", "e", "m", "o", "t", "e"]) harness.handleInput(input);
-				const filtered = stripVTControlCharacters(harness.render().join("\n"));
-				assert.match(filtered, /custom/);
-				assert.doesNotMatch(filtered, /› .*bash|› .*read|› .*write/);
-				harness.handleInput("tui.select.confirm");
-				for (let index = 0; index < 6; index += 1) harness.handleInput("\u007f");
-				assert.match(stripVTControlCharacters(harness.render().join("\n")), /› \[x\] custom/);
-				harness.handleInput("tui.select.down");
-				harness.handleInput("tui.select.confirm");
-				await harness.waitForPending();
-				return harness.result;
-			},
-		});
-
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("tools", context.ctx);
-
-		assert.equal(customCalled, true);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["bash", "custom", ...REQUIRED_PLAN_TOOLS]);
-		const persisted = mock.entries.at(-1)?.data as { selectedToolNames?: string[] } | undefined;
-		assert.deepEqual(persisted?.selectedToolNames, ["bash", "custom"]);
+test("an active workflow snapshots defaults instead of following later settings changes", async () => {
+	const loaded = {
+		thinkingLevel: "inherit" as const,
+		defaultPlanTools: ["read"],
+	};
+	const mock = createMockPi({
+		activeTools: ["read", "bash"],
+		allTools: [builtinTool("read"), builtinTool("bash")],
 	});
+	planMode(mock.pi, {
+		readSettings: async () => ({ kind: "loaded" as const, settings: loaded }),
+	});
+	const context = await start(mock);
+	loaded.defaultPlanTools = ["bash"];
+
+	assert.equal(await callTool(mock, context, "read"), undefined);
+	assert.equal(
+		((await callTool(mock, context, "bash", { command: "pwd" })) as { block?: boolean }).block,
+		true,
+	);
 });
 
-test("implementation handoff restores tools after using configured defaults", async () => {
-	await withAgentDir(async (agentDir) => {
-		await writeFile(
-			join(agentDir, "pi-plan-mode.json"),
-			JSON.stringify({ defaultPlanTools: ["bash"] }),
-		);
-		const mock = createMockPi({
-			activeTools: ["read", "write", "custom"],
-			allTools: [
-				builtinTool("read"),
-				builtinTool("bash"),
-				builtinTool("write"),
-				extensionTool("custom"),
-			],
-		});
-		planMode(mock.pi);
-		const context = createMockContext();
-		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-		await mock.commands.get("plan")?.handler("start", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["bash", ...REQUIRED_PLAN_TOOLS]);
-
-		const execute = mock.tools.find((tool) => tool.name === "plan_mode_complete")?.execute as
-			| ((...args: unknown[]) => Promise<unknown>)
-			| undefined;
-		assert.ok(execute);
-		await execute("complete", { plan: "# Configured handoff" }, undefined, undefined, context.ctx);
-		await mock.commands.get("plan")?.handler("implement", context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "custom"]);
-		assert.equal(mock.sentUserMessages.at(-1)?.text, "Implement the plan.");
+test("branch-restored selections constrain policy while helpers remain model-visible", async () => {
+	const stateEntry = {
+		type: "custom",
+		customType: "plan-mode-state",
+		data: { enabled: true, awaitingAction: false, selectedToolNames: ["read"] },
+	};
+	const mock = createMockPi({
+		activeTools: ["read", "bash", "write"],
+		allTools: [builtinTool("read"), builtinTool("bash"), builtinTool("write")],
 	});
+	planMode(mock.pi);
+	const context = createMockContext({
+		sessionManager: {
+			getBranch: () => [stateEntry],
+			getEntries: () => [stateEntry],
+		},
+	});
+	await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "write", ...HELPERS]);
+	assert.equal(await callTool(mock, context, "read"), undefined);
+	assert.equal(
+		((await callTool(mock, context, "bash", { command: "pwd" })) as { block?: boolean }).block,
+		true,
+	);
 });
 
 async function withAgentDir(run: (agentDir: string) => Promise<void>) {

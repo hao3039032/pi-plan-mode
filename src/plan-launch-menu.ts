@@ -44,10 +44,10 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 			}),
 			tools: () => ({
 				kind: "multiSelect",
-				title: "Choose Plan-mode tools",
+				title: "Choose Plan policy allowlist",
 				lines: [
-					"Changes apply only when you start Plan mode.",
-					"Non-built-in tools run at user risk.",
+					"Changes apply only when you start Plan mode; model-visible tools stay unchanged.",
+					"Only tools already active in Pi can be allowed; non-built-ins run at user risk.",
 				],
 				enableSearch: true,
 				viewportSize: 10,
@@ -64,7 +64,7 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 				actions: [
 					{
 						id: "start-with-tools",
-						label: "Done — start Plan mode",
+						label: "Done — start with this policy",
 						action: "start-with-tools",
 					},
 				],

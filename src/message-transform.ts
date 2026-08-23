@@ -98,9 +98,18 @@ export function injectActiveImplementationContext(
 	messages: unknown[],
 	activeImplementation: ActiveImplementationPlan,
 ) {
+	let foundCurrentContext = false;
 	let foundCurrentHandoff = false;
+	const expectedContext = activeImplementationContextContent(activeImplementation);
 	const messagesWithoutStaleContext = messages.filter((message) => {
-		if (messageContainsPlanModeImplementationContextArtifact(message)) return false;
+		if (messageContainsPlanModeImplementationContextArtifact(message)) {
+			const candidate = unwrapSessionMessage(message);
+			if (!foundCurrentContext && candidate.content === expectedContext) {
+				foundCurrentContext = true;
+				return true;
+			}
+			return false;
+		}
 		if (!messageContainsPlanModeImplementationHandoff(message)) return true;
 		if (
 			!foundCurrentHandoff &&
@@ -111,14 +120,14 @@ export function injectActiveImplementationContext(
 		}
 		return false;
 	});
-	if (foundCurrentHandoff) return messagesWithoutStaleContext;
+	if (foundCurrentHandoff || foundCurrentContext) return messagesWithoutStaleContext;
 
 	let insertionIndex = 0;
 	while (isSummaryMessage(messagesWithoutStaleContext[insertionIndex])) insertionIndex += 1;
 	const contextMessage = {
 		role: "custom" as const,
 		customType: PLAN_IMPLEMENTATION_CONTEXT_MESSAGE_TYPE,
-		content: `[ACTIVE IMPLEMENTATION PLAN]\n\nThe user approved the exact implementation plan below. Continue following it until the user explicitly clears or supersedes it. The exact plan is the remainder of this message:\n\n${activeImplementation.plan}`,
+		content: expectedContext,
 		display: false,
 		timestamp: activeImplementation.startedAt,
 	};
@@ -127,6 +136,10 @@ export function injectActiveImplementationContext(
 		contextMessage,
 		...messagesWithoutStaleContext.slice(insertionIndex),
 	];
+}
+
+function activeImplementationContextContent(activeImplementation: ActiveImplementationPlan) {
+	return `[ACTIVE IMPLEMENTATION PLAN]\n\nThe user approved the exact implementation plan below. Continue following it until the user explicitly clears or supersedes it. The exact plan is the remainder of this message:\n\n${activeImplementation.plan}`;
 }
 
 export function messageContainsInactivePlanModeArtifact(message: unknown) {

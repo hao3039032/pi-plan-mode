@@ -1,7 +1,4 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
-import { PLAN_MODE_COMPLETE_TOOL_NAME } from "./completion-tool.js";
-import { PLAN_MODE_QUESTION_TOOL_NAME } from "./question-tool.js";
-import { withRequiredPlanModeTools } from "./required-tools.js";
 import {
 	canSelectToolInPlanMode,
 	classifyPlanModeTool,
@@ -74,25 +71,5 @@ export function snapshotPlanModeSelectedNames(
 		selectedToolNames === undefined
 			? defaultPlanModeToolNames(tools, selection.defaultPlanTools)
 			: filterAvailableSelectedToolNames(selectedToolNames, tools),
-	);
-}
-
-export function snapshotPlanModeToolNames(
-	tools: ToolInfo[],
-	selectedNames: ReadonlySet<string>,
-	selection: PlanModeToolSelectionSnapshot,
-) {
-	if (
-		tools.length === 0 &&
-		selection.selectedToolNames === undefined &&
-		selection.selectedToolKeys === undefined &&
-		selection.defaultPlanTools === undefined
-	) {
-		return ["read", "bash", PLAN_MODE_QUESTION_TOOL_NAME, PLAN_MODE_COMPLETE_TOOL_NAME];
-	}
-	return withRequiredPlanModeTools(
-		tools
-			.filter((tool) => selectedNames.has(tool.name) && canSelectToolInPlanMode(tool))
-			.map((tool) => tool.name),
 	);
 }

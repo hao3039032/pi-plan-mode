@@ -241,7 +241,7 @@ test("busy direct starts preserve state in every command mode", async () => {
 	}
 });
 
-test("busy restored and --plan activation start no Plan work and perform no tool writes", async () => {
+test("busy restored and --plan activation performs only the startup envelope write", async () => {
 	for (const restoredData of [
 		{ enabled: true, awaitingAction: false },
 		{ enabled: false, awaitingAction: false },
@@ -265,8 +265,12 @@ test("busy restored and --plan activation start no Plan work and perform no tool
 		const context = createMockContext({ mode: "tui", hasUI: true, sessionManager });
 
 		await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-		assert.equal(activeToolWrites, 0);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["goal_complete"]);
+		assert.equal(activeToolWrites, 1);
+		assert.deepEqual(mock.rawPi.getActiveTools(), [
+			"goal_complete",
+			"plan_mode_question",
+			"plan_mode_complete",
+		]);
 		assert.equal(mock.thinkingLevel, "high");
 		assert.equal(mock.thinkingLevels.length, 0);
 		assert.equal(mock.entries.length, 0);
@@ -328,7 +332,12 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
 	});
 	await shortcutMock.events.get("session_start")?.[0]?.({ reason: "startup" }, shortcutContext.ctx);
 	await shortcutMock.shortcuts.get("ctrl+shift+p")?.handler(shortcutContext.ctx);
-	assert.deepEqual(shortcutMock.rawPi.getActiveTools(), ["read", "write"]);
+	assert.deepEqual(shortcutMock.rawPi.getActiveTools(), [
+		"read",
+		"write",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 	assert.equal(shortcutMock.entries.length, 0);
 	assert.match(shortcutContext.notifications.at(-1)?.message ?? "", /Another workflow/u);
 
@@ -366,7 +375,12 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
 	await activeMock.commands.get("plan")?.handler("", activeContext.ctx);
 	assert.ok(startNew);
 	startNew();
-	assert.deepEqual(activeMock.rawPi.getActiveTools(), ["read", "write"]);
+	assert.deepEqual(activeMock.rawPi.getActiveTools(), [
+		"read",
+		"write",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 	assert.equal(activeMock.entries.length, 0);
 	assert.deepEqual([...activeContext.statuses], statusSnapshot);
 });
@@ -406,7 +420,12 @@ test("Plan releases only after exit, save, export, implementation handoff, and s
 			const released = attempt(sessionManager);
 			mock.eventBus.emit(WORKFLOW_MUTEX_CHANNEL, released);
 			assert.equal(released.busy, false, `${action} should release after cleanup`);
-			assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
+			assert.deepEqual(mock.rawPi.getActiveTools(), [
+				"read",
+				"write",
+				"plan_mode_question",
+				"plan_mode_complete",
+			]);
 		}
 	} finally {
 		await rm(exportRoot, { recursive: true, force: true });

@@ -77,10 +77,15 @@ test("ready plan export ends Plan mode without triggering a model turn", async (
 		assert.equal(persistedState.enabled, false);
 		assert.equal(persistedState.latestPlan, undefined);
 		assert.equal(persistedState.awaitingAction, false);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
+		assert.deepEqual(mock.rawPi.getActiveTools(), [
+			"read",
+			"edit",
+			"plan_mode_question",
+			"plan_mode_complete",
+		]);
 		assert.equal(mock.thinkingLevel, "low");
 		assert.equal(mock.sentUserMessages.length, 0);
-		assert.equal(mock.sentMessages.length, 0);
+		assert.equal(mock.sentMessages.length, 2, "Plan and Normal contracts do not trigger turns");
 		assert.match(
 			context.notifications.at(-1)?.message ?? "",
 			/exported.*PLAN\.md.*Plan mode disabled/i,

@@ -133,7 +133,8 @@ test("conversation-history implementation uses a short prompt without active-pla
 	const messages = [planCall, planResult, { role: "user", content: handoff }];
 	for (let call = 0; call < 2; call += 1) {
 		const transformed = (await contextHook({ messages }, context.ctx)) as { messages: unknown[] };
-		assert.deepEqual(transformed.messages, messages);
+		assert.match(JSON.stringify(transformed.messages[0]), /CONTRACT v1: NORMAL/u);
+		assert.deepEqual(transformed.messages.slice(1), messages);
 		assert.doesNotMatch(JSON.stringify(transformed.messages), /plan-mode-implementation-context/);
 	}
 	await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);

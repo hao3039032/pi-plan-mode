@@ -55,24 +55,26 @@ export function createImplementationRetentionCoordinator(): ImplementationRetent
 					: undefined;
 		},
 		transformContext(messages, state) {
-			const messagesWithoutPlanContext = messages.filter(
-				(message) =>
-					!messageContainsLegacyPlanModeContextArtifact(message) &&
-					!messageContainsPlanModeImplementationContextArtifact(message),
+			const messagesWithoutLegacyContext = messages.filter(
+				(message) => !messageContainsLegacyPlanModeContextArtifact(message),
 			);
 			if (state.enabled) {
 				return {
-					messages: messagesWithoutPlanContext.filter(
-						(message) => !messageContainsPlanModeImplementationHandoff(message),
+					messages: messagesWithoutLegacyContext.filter(
+						(message) =>
+							!messageContainsPlanModeImplementationContextArtifact(message) &&
+							!messageContainsPlanModeImplementationHandoff(message),
 					),
 				};
 			}
 
 			const activeImplementation = state.activeImplementation;
 			const inactiveMessages = activeImplementation
-				? messagesWithoutPlanContext
-				: messagesWithoutPlanContext.filter(
-						(message) => !messageContainsPlanModeImplementationHandoff(message),
+				? messagesWithoutLegacyContext
+				: messagesWithoutLegacyContext.filter(
+						(message) =>
+							!messageContainsPlanModeImplementationContextArtifact(message) &&
+							!messageContainsPlanModeImplementationHandoff(message),
 					);
 			const historyArtifact = activeImplementation
 				? undefined

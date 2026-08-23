@@ -59,7 +59,7 @@ test("Plan settings show five flat workflow rows without materializing a missing
 		const frame = tui.render().join("\n");
 		assert.match(frame, /Plan Mode Settings/);
 		assert.match(frame, /Plan thinking\s+inherit/);
-		assert.match(frame, /Plan tools\s+Automatic safe built-ins/);
+		assert.match(frame, /Plan policy tools\s+Automatic safe built-ins/);
 		assert.match(frame, /Plan reinjection\s+Off — conversation history only/);
 		assert.match(frame, /Export destination\s+PLAN\.md/);
 		assert.match(frame, /Plan mode shortcut\s+none/);
@@ -101,7 +101,7 @@ test("Default tools distinguish automatic, explicit empty, user risk, blocked ro
 		await tui.waitForPending();
 		await tui.waitForOpen();
 		let frame = tui.render().join("\n");
-		assert.match(frame, /Default Plan-mode tools/);
+		assert.match(frame, /Default Plan policy allowlist/);
 		assert.match(frame, /user risk/i);
 		assert.match(frame, /Use automatic safe built-ins/);
 		tui.press("tui.select.down");
@@ -121,7 +121,7 @@ test("Default tools distinguish automatic, explicit empty, user risk, blocked ro
 		tui.press("tui.select.cancel");
 		await tui.waitForPending();
 		await tui.waitForOpen();
-		assert.match(tui.render().join("\n"), /Plan tools\s+Required tools only/);
+		assert.match(tui.render().join("\n"), /Plan policy tools\s+No optional tools/);
 
 		// Reopen and choose the pinned reset action after the three tool rows.
 		tui.press("tui.select.confirm");
@@ -337,7 +337,7 @@ test("RPC Settings changes retention and export destination with the same flat n
 				kind: "select",
 				options: [
 					"Plan thinking (inherit)",
-					"Plan tools (Automatic safe built-ins)",
+					"Plan policy tools (Automatic safe built-ins)",
 					"Plan reinjection (Off — conversation history only)",
 					"Export destination (PLAN.md)",
 					"Plan mode shortcut (none)",
@@ -349,7 +349,7 @@ test("RPC Settings changes retention and export destination with the same flat n
 				kind: "select",
 				options: [
 					"Plan thinking (inherit)",
-					"Plan tools (Automatic safe built-ins)",
+					"Plan policy tools (Automatic safe built-ins)",
 					"Plan reinjection (Through first implementation run)",
 					"Export destination (PLAN.md)",
 					"Plan mode shortcut (none)",
@@ -366,7 +366,7 @@ test("RPC Settings changes retention and export destination with the same flat n
 				kind: "select",
 				options: [
 					"Plan thinking (inherit)",
-					"Plan tools (Automatic safe built-ins)",
+					"Plan policy tools (Automatic safe built-ins)",
 					"Plan reinjection (Through first implementation run)",
 					"Export destination (rpc/PLAN.md)",
 					"Plan mode shortcut (none)",
@@ -392,7 +392,7 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
 			kind: "select",
 			options: [
 				"Plan thinking (inherit)",
-				"Plan tools (Automatic safe built-ins)",
+				"Plan policy tools (Automatic safe built-ins)",
 				"Plan reinjection (Off — conversation history only)",
 				"Export destination (PLAN.md)",
 				"Plan mode shortcut (none)",

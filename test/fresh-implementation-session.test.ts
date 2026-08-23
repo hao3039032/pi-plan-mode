@@ -21,6 +21,16 @@ const PLAN = `# Fresh implementation plan
 2. Exclude the planning conversation.`;
 const STATE_ENTRY_TYPE = "plan-mode-state";
 
+interface FreshSetupManager {
+	appendCustomEntry(customType: string, data: unknown): string;
+	appendCustomMessageEntry(
+		customType: string,
+		content: unknown,
+		display: boolean,
+		details?: unknown,
+	): string;
+}
+
 function stateEntry(data: Record<string, unknown>) {
 	return { type: "custom" as const, customType: STATE_ENTRY_TYPE, data };
 }
@@ -175,6 +185,7 @@ test("fresh implementation creates a linked destination and hands off only throu
 		}),
 	});
 	const destinationEntries: Array<{ type: "custom"; customType: string; data: unknown }> = [];
+	const destinationContracts: Array<{ customType: string; content: unknown }> = [];
 	const replacementMessages: string[] = [];
 	let newSessionCalls = 0;
 	let parentSession: string | undefined;
@@ -192,9 +203,7 @@ test("fresh implementation creates a linked destination and hands off only throu
 			options.includes("Start fresh and implement") ? "Start fresh and implement" : undefined,
 		newSession: async (options: {
 			parentSession?: string;
-			setup?: (sessionManager: {
-				appendCustomEntry(customType: string, data: unknown): string;
-			}) => Promise<void>;
+			setup?: (sessionManager: FreshSetupManager) => Promise<void>;
 			withSession?: (ctx: { sendUserMessage(message: string): Promise<void> }) => Promise<void>;
 		}) => {
 			newSessionCalls += 1;
@@ -203,6 +212,10 @@ test("fresh implementation creates a linked destination and hands off only throu
 				appendCustomEntry(customType, data) {
 					destinationEntries.push({ type: "custom", customType, data });
 					return "destination-state";
+				},
+				appendCustomMessageEntry(customType, content) {
+					destinationContracts.push({ customType, content });
+					return "destination-contract";
 				},
 			});
 			await options.withSession?.({
@@ -224,6 +237,9 @@ test("fresh implementation creates a linked destination and hands off only throu
 	assert.equal(parentSession, "/sessions/planning.jsonl");
 	assert.equal(mock.entries.length, sourceEntriesBefore);
 	assert.equal(mock.sentUserMessages.length, 0);
+	assert.equal(destinationContracts.length, 1);
+	assert.equal(destinationContracts[0]?.customType, "plan-mode-transition");
+	assert.match(String(destinationContracts[0]?.content), /CONTRACT v1: NORMAL/u);
 	assert.equal(destinationEntries.length, 1);
 	const destinationState = destinationEntries[0]?.data as {
 		enabled?: boolean;
@@ -262,9 +278,7 @@ test("saved plans can start fresh without consuming the source session state", a
 		},
 		select: async () => "Start fresh and implement",
 		newSession: async (options: {
-			setup?: (sessionManager: {
-				appendCustomEntry(customType: string, data: unknown): string;
-			}) => Promise<void>;
+			setup?: (sessionManager: FreshSetupManager) => Promise<void>;
 			withSession?: (ctx: { sendUserMessage(message: string): Promise<void> }) => Promise<void>;
 		}) => {
 			newSessionCalls += 1;
@@ -272,6 +286,9 @@ test("saved plans can start fresh without consuming the source session state", a
 				appendCustomEntry(_customType, data) {
 					destinationState = data;
 					return "destination-state";
+				},
+				appendCustomMessageEntry() {
+					return "destination-contract";
 				},
 			});
 			await options.withSession?.({
@@ -368,7 +385,12 @@ test("fresh destination adopts setup state before kickoff for guaranteed-plan po
 			context.ctx,
 		);
 		assert.equal(context.statuses.get("plan-mode"), "plan implementing");
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
+		assert.deepEqual(mock.rawPi.getActiveTools(), [
+			"read",
+			"edit",
+			"plan_mode_question",
+			"plan_mode_complete",
+		]);
 
 		const firstContext = (await mock.events.get("context")?.[0]?.(
 			{ messages: [{ role: "user", content: handoff }] },
@@ -394,12 +416,15 @@ test("conversation-history fresh kickoff skips active state and recovers in the 
 		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true as const }) },
 		sessionManager: { getSessionFile: () => "/sessions/planning.jsonl" },
 		newSession: async (options: {
-			setup?: () => Promise<void>;
+			setup?: (sessionManager: FreshSetupManager) => Promise<void>;
 			withSession?: (ctx: unknown) => Promise<void>;
 		}) => {
 			if (options.setup) {
 				setupCalls += 1;
-				await options.setup();
+				await options.setup({
+					appendCustomEntry: () => "unused-state",
+					appendCustomMessageEntry: () => "destination-contract",
+				});
 			}
 			await options.withSession?.({
 				...(replacement.ctx as object),
@@ -420,7 +445,7 @@ test("conversation-history fresh kickoff skips active state and recovers in the 
 	});
 
 	assert.equal(result.kind, "partial");
-	assert.equal(setupCalls, 0);
+	assert.equal(setupCalls, 1);
 	assert.equal(replacement.editorText, formatTransferredPlanPrompt(PLAN, true));
 	assert.match(replacement.notifications.at(-1)?.message ?? "", /request is in the editor/i);
 	assert.doesNotMatch(replacement.notifications.at(-1)?.message ?? "", /active plan/i);
@@ -443,7 +468,14 @@ test("fresh success notification failures do not downgrade or duplicate kickoff"
 		model: { provider: "test-provider", id: "test-model" },
 		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true as const }) },
 		sessionManager: { getSessionFile: () => "/sessions/planning.jsonl" },
-		newSession: async (options: { withSession?: (ctx: unknown) => Promise<void> }) => {
+		newSession: async (options: {
+			setup?: (sessionManager: FreshSetupManager) => Promise<void>;
+			withSession?: (ctx: unknown) => Promise<void>;
+		}) => {
+			await options.setup?.({
+				appendCustomEntry: () => "unused-state",
+				appendCustomMessageEntry: () => "destination-contract",
+			});
 			await options.withSession?.({
 				...(replacement.ctx as object),
 				async sendUserMessage() {
@@ -484,14 +516,15 @@ test("fresh recovery reports when a stale editor cannot accept the request", asy
 		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true as const }) },
 		sessionManager: { getSessionFile: () => "/sessions/planning.jsonl" },
 		newSession: async (options: {
-			setup?: (sessionManager: {
-				appendCustomEntry(customType: string, data: unknown): string;
-			}) => Promise<void>;
+			setup?: (sessionManager: FreshSetupManager) => Promise<void>;
 			withSession?: (ctx: unknown) => Promise<void>;
 		}) => {
 			await options.setup?.({
 				appendCustomEntry() {
 					throw new Error("state persistence failed");
+				},
+				appendCustomMessageEntry() {
+					return "destination-contract";
 				},
 			});
 			await options.withSession?.(replacement.ctx);
@@ -524,16 +557,17 @@ test("fresh replacement reports recoverable setup and kickoff failures as partia
 			modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true as const }) },
 			sessionManager: { getSessionFile: () => "/sessions/planning.jsonl" },
 			newSession: async (options: {
-				setup?: (sessionManager: {
-					appendCustomEntry(customType: string, data: unknown): string;
-				}) => Promise<void>;
+				setup?: (sessionManager: FreshSetupManager) => Promise<void>;
 				withSession?: (ctx: unknown) => Promise<void>;
 			}) => {
 				await options.setup?.({
 					appendCustomEntry(_customType, data) {
-						if (failure === "setup") throw new Error("disk\u001b[31m denied");
 						appendedState = data;
 						return "destination-state";
+					},
+					appendCustomMessageEntry() {
+						if (failure === "setup") throw new Error("disk\u001b[31m denied");
+						return "destination-contract";
 					},
 				});
 				await options.withSession?.({

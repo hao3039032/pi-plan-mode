@@ -223,13 +223,14 @@ test("issue 471: an active implementation plan is restored after compaction remo
 		messages: Array<Record<string, unknown>>;
 	};
 
-	assert.equal(transformed.messages.length, 3);
+	assert.equal(transformed.messages.length, 4);
 	assert.deepEqual(transformed.messages[0], compactedMessages[0]);
-	assert.deepEqual(transformed.messages[2], compactedMessages[1]);
-	assert.equal(transformed.messages[1]?.role, "custom");
-	assert.equal(transformed.messages[1]?.customType, "plan-mode-implementation-context");
-	assert.match(String(transformed.messages[1]?.content), /ACTIVE IMPLEMENTATION PLAN/);
-	assert.ok(String(transformed.messages[1]?.content).endsWith(PLAN));
+	assert.match(String(transformed.messages[1]?.content), /CONTRACT v1: NORMAL/u);
+	assert.equal(transformed.messages[2]?.role, "custom");
+	assert.equal(transformed.messages[2]?.customType, "plan-mode-implementation-context");
+	assert.match(String(transformed.messages[2]?.content), /ACTIVE IMPLEMENTATION PLAN/);
+	assert.ok(String(transformed.messages[2]?.content).endsWith(PLAN));
+	assert.deepEqual(transformed.messages[3], compactedMessages[1]);
 
 	const persisted = mock.entries.at(-1)?.data as {
 		enabled?: boolean;
@@ -257,6 +258,7 @@ test("implementation transition rejects a busy run before committing and succeed
 	assert.equal(context.statuses.get("plan-mode"), "plan ready");
 	assert.deepEqual(mock.rawPi.getActiveTools(), [
 		"read",
+		"edit",
 		"plan_mode_question",
 		"plan_mode_complete",
 	]);
@@ -278,7 +280,12 @@ test("implementation transition rejects a busy run before committing and succeed
 		JSON.stringify(context.widgets.get("plan-mode-plan")),
 		/implementation plan active/i,
 	);
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"edit",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 	assert.equal(mock.sentUserMessages.at(-1)?.options, undefined);
 	const activeState = latestState(mock.entries);
 	assert.equal(activeState?.activeImplementation?.plan, PLAN);
@@ -314,11 +321,7 @@ test("failed implementation delivery restores ready state without retained imple
 
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), "plan ready");
-	assert.deepEqual(mock.rawPi.getActiveTools(), [
-		"read",
-		"plan_mode_question",
-		"plan_mode_complete",
-	]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "custom"]);
 	const restored = latestState(mock.entries);
 	assert.equal(restored?.latestPlan, PLAN);
 	assert.equal(restored?.activeImplementation, undefined);
@@ -352,7 +355,12 @@ test("a failed superseding prompt restores the exact active implementation", asy
 	await mock.commands.get("plan")?.handler("design a replacement", context.ctx);
 
 	assert.equal(context.statuses.get("plan-mode"), "plan implementing");
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"edit",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 	const restored = latestState(mock.entries);
 	assert.equal(restored?.enabled, false);
 	assert.deepEqual(restored?.activeImplementation, activeBeforeFailure);
@@ -384,7 +392,8 @@ test("active context avoids exact handoff duplication and replaces stale injecte
 		).length,
 		0,
 	);
-	assert.deepEqual(withHandoff.messages, [{ role: "user", content: "plan it" }, handoff]);
+	assert.match(String(withHandoff.messages[0]?.content), /CONTRACT v1: NORMAL/u);
+	assert.deepEqual(withHandoff.messages.slice(1), [{ role: "user", content: "plan it" }, handoff]);
 
 	const staleHandoff = {
 		role: "user",
@@ -394,7 +403,8 @@ test("active context avoids exact handoff duplication and replaces stale injecte
 		{ messages: [staleHandoff, handoff, handoff] },
 		context.ctx,
 	)) as { messages: Array<Record<string, unknown>> };
-	assert.deepEqual(withStaleHandoff.messages, [handoff]);
+	assert.match(String(withStaleHandoff.messages[0]?.content), /CONTRACT v1: NORMAL/u);
+	assert.deepEqual(withStaleHandoff.messages.slice(1), [handoff]);
 
 	const toolCall = {
 		role: "assistant",
@@ -424,9 +434,10 @@ test("active context avoids exact handoff duplication and replaces stale injecte
 	};
 	for (const transformed of [once.messages, twice.messages]) {
 		assert.deepEqual(transformed[0], compacted[0]);
-		assert.equal(transformed[1]?.customType, "plan-mode-implementation-context");
-		assert.match(String(transformed[1]?.content), /PLAN-PERSIST-TEST-42/);
-		assert.deepEqual(transformed.slice(2), [toolCall, toolResult]);
+		assert.match(String(transformed[1]?.content), /CONTRACT v1: NORMAL/u);
+		assert.equal(transformed[2]?.customType, "plan-mode-implementation-context");
+		assert.match(String(transformed[2]?.content), /PLAN-PERSIST-TEST-42/);
+		assert.deepEqual(transformed.slice(3), [toolCall, toolResult]);
 		assert.equal(
 			transformed.filter((message) => message.customType === "plan-mode-implementation-context")
 				.length,
@@ -468,7 +479,9 @@ test("active plans can be shown and cleared through existing direct routes", asy
 		},
 		context.ctx,
 	)) as { messages: Array<Record<string, unknown>> };
-	assert.deepEqual(transformed.messages, [{ role: "compactionSummary", summary: "lossy" }]);
+	assert.deepEqual(transformed.messages[0], { role: "compactionSummary", summary: "lossy" });
+	assert.match(String(transformed.messages[1]?.content), /CONTRACT v1: NORMAL/u);
+	assert.equal(transformed.messages.length, 2);
 });
 
 test("a Plan-mode question cannot commit or open its next prompt after Plan mode exits", async () => {
@@ -689,7 +702,10 @@ test("starting a new Plan-mode workflow supersedes the active implementation", a
 		{ messages: [oldHandoff, { role: "user", content: "design a replacement" }] },
 		context.ctx,
 	)) as { messages: Array<Record<string, unknown>> };
-	assert.deepEqual(transformed.messages, [{ role: "user", content: "design a replacement" }]);
+	assert.match(String(transformed.messages[0]?.content), /CONTRACT v1: PLAN/u);
+	assert.deepEqual(transformed.messages.slice(1), [
+		{ role: "user", content: "design a replacement" },
+	]);
 });
 
 test("a superseded session start cannot publish stale settings or UI state", async () => {
@@ -802,8 +818,9 @@ test("resume and shutdown retain branch-local implementation state while clearin
 		{ messages: [{ role: "branchSummary", summary: "continued branch" }] },
 		context.ctx,
 	)) as { messages: Array<Record<string, unknown>> };
-	assert.equal(transformed.messages[1]?.customType, "plan-mode-implementation-context");
-	assert.match(String(transformed.messages[1]?.content), /PLAN-PERSIST-TEST-42/);
+	assert.match(String(transformed.messages[1]?.content), /CONTRACT v1: NORMAL/u);
+	assert.equal(transformed.messages[2]?.customType, "plan-mode-implementation-context");
+	assert.match(String(transformed.messages[2]?.content), /PLAN-PERSIST-TEST-42/);
 
 	await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), undefined);
