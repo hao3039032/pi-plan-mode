@@ -25,10 +25,7 @@ function latestState(mock: ReturnType<typeof createMockPi>) {
 	};
 }
 
-async function beginImplementation(
-	retention: ImplementationPlanRetention,
-	options: { idle?: boolean } = {},
-) {
+async function beginImplementation(retention: ImplementationPlanRetention) {
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi, {
 		readSettings: async () => ({
@@ -39,7 +36,7 @@ async function beginImplementation(
 			},
 		}),
 	});
-	const context = createMockContext({ isIdle: () => options.idle ?? true });
+	const context = createMockContext();
 	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete")?.execute as
@@ -102,7 +99,7 @@ test("keep leaves the accepted plan active after context and settlement", async 
 });
 
 test("conversation-history implementation uses a short prompt without active-plan injection", async () => {
-	const { mock, context, handoff } = await beginImplementation("clear-on-start", { idle: false });
+	const { mock, context, handoff } = await beginImplementation("clear-on-start");
 	const contextHook = mock.events.get("context")?.[0];
 	assert.ok(contextHook);
 	assert.equal(handoff, "Implement the plan.");
@@ -271,9 +268,7 @@ test("conversation-history context preserves a legacy proposed plan without rein
 });
 
 test("first-run ignores older settlement and clears only after its handoff context settles", async () => {
-	const { mock, context, handoff } = await beginImplementation("clear-after-first-run", {
-		idle: false,
-	});
+	const { mock, context, handoff } = await beginImplementation("clear-after-first-run");
 	await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
 	assert.equal(latestState(mock).activeImplementation?.retention, "clear-after-first-run");
 

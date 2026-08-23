@@ -6,6 +6,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import { planModeCompleted } from "../src/completion-tool.js";
+import { FINALIZE_PLAN_PROMPT, RETRY_FINALIZE_PLAN_PROMPT } from "../src/finalization-request.js";
 import planMode, {
 	buildPlanModePrompt,
 	completePlanArguments,
@@ -588,12 +589,250 @@ test("plan finalize requires active mode and uses idle-safe delivery", async () 
 
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	await mock.commands.get("plan")?.handler("finalize", context.ctx);
-	assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /plan_mode_complete/);
+	assert.equal(mock.sentUserMessages.at(-1)?.text, FINALIZE_PLAN_PROMPT);
 	assert.equal(mock.sentUserMessages.at(-1)?.options, undefined);
 
 	idle = false;
 	await mock.commands.get("plan")?.handler("finalize", context.ctx);
 	assert.deepEqual(mock.sentUserMessages.at(-1)?.options, { deliverAs: "followUp" });
+});
+
+test("busy mode-changing commands fail closed while Plan follow-ups remain available", async () => {
+	let idle = true;
+	const mock = createMockPi({ activeTools: ["read", "write"], thinkingLevel: "low" });
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const context = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		isIdle: () => idle,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
+		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
+	assert.ok(complete);
+	await complete("ready", { plan: "# Ready" }, undefined, undefined, context.ctx);
+
+	idle = false;
+	const snapshot = {
+		entries: mock.entries.length,
+		tools: mock.rawPi.getActiveTools(),
+		thinking: mock.thinkingLevel,
+		status: context.statuses.get("plan-mode"),
+		messages: mock.sentUserMessages.length,
+	};
+	for (const command of ["exit", "save", "implement", "export busy-plan.md"]) {
+		await mock.commands.get("plan")?.handler(command, context.ctx);
+		assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+		assert.equal(mock.entries.length, snapshot.entries);
+		assert.deepEqual(mock.rawPi.getActiveTools(), snapshot.tools);
+		assert.equal(mock.thinkingLevel, snapshot.thinking);
+		assert.equal(context.statuses.get("plan-mode"), snapshot.status);
+		assert.equal(mock.sentUserMessages.length, snapshot.messages);
+	}
+
+	await mock.commands.get("plan")?.handler("revise the ready plan", context.ctx);
+	assert.equal(mock.sentUserMessages.at(-1)?.text, "revise the ready plan");
+	assert.deepEqual(mock.sentUserMessages.at(-1)?.options, { deliverAs: "followUp" });
+	await mock.commands.get("plan")?.handler("finalize", context.ctx);
+	assert.equal(mock.sentUserMessages.at(-1)?.text, FINALIZE_PLAN_PROMPT);
+	assert.deepEqual(mock.sentUserMessages.at(-1)?.options, { deliverAs: "followUp" });
+});
+
+test("busy inactive Plan starts fail observably without changing state in every command mode", async () => {
+	for (const mode of ["tui", "rpc", "print", "json"] as const) {
+		const mock = createMockPi({ activeTools: ["read", "write"] });
+		planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+		const context = createMockContext({
+			mode,
+			hasUI: mode === "tui" || mode === "rpc",
+			isIdle: () => false,
+		});
+		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+		const command = mock.commands.get("plan");
+		assert.ok(command);
+
+		for (const input of ["start", "design a release"]) {
+			if (mode === "tui" || mode === "rpc") {
+				await command.handler(input, context.ctx);
+				assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+			} else {
+				await assert.rejects(
+					async () => command.handler(input, context.ctx),
+					/run is active.*retry/i,
+				);
+			}
+			assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
+			assert.equal(mock.entries.length, 0);
+			assert.equal(mock.sentUserMessages.length, 0);
+		}
+	}
+});
+
+test("busy active Plan exits fail observably without releasing tools in every command mode", async () => {
+	for (const mode of ["tui", "rpc", "print", "json"] as const) {
+		let idle = true;
+		const mock = createMockPi({ activeTools: ["read", "write"] });
+		planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+		const context = createMockContext({
+			mode,
+			hasUI: mode === "tui" || mode === "rpc",
+			isIdle: () => idle,
+		});
+		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+		const command = mock.commands.get("plan");
+		assert.ok(command);
+		await command.handler("start", context.ctx);
+		const entriesAfterStart = mock.entries.length;
+
+		idle = false;
+		if (mode === "tui" || mode === "rpc") {
+			await command.handler("exit", context.ctx);
+			assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+		} else {
+			await assert.rejects(
+				async () => command.handler("exit", context.ctx),
+				/run is active.*retry/i,
+			);
+		}
+		assert.deepEqual(mock.rawPi.getActiveTools(), [
+			"read",
+			"plan_mode_question",
+			"plan_mode_complete",
+		]);
+		assert.equal(mock.entries.length, entriesAfterStart);
+		assert.equal(context.statuses.get("plan-mode"), "plan active");
+	}
+});
+
+test("explicit finalization retries once after settlement and then fails visibly", async () => {
+	const mock = createMockPi({ activeTools: ["read"] });
+	planMode(mock.pi);
+	const context = createMockContext({ mode: "tui", hasUI: true });
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	await mock.commands.get("plan")?.handler("finalize", context.ctx);
+
+	const agentEnd = mock.events.get("agent_end")?.[0];
+	const agentSettled = mock.events.get("agent_settled")?.[0];
+	assert.ok(agentEnd);
+	assert.ok(agentSettled);
+	await agentEnd(
+		{ messages: [{ role: "assistant", content: "The tool is unavailable.", stopReason: "stop" }] },
+		context.ctx,
+	);
+	await agentSettled({}, context.ctx);
+	assert.equal(mock.sentUserMessages.at(-1)?.text, RETRY_FINALIZE_PLAN_PROMPT);
+	assert.equal(mock.sentUserMessages.length, 2);
+
+	await agentEnd(
+		{ messages: [{ role: "assistant", content: "Still unavailable.", stopReason: "stop" }] },
+		context.ctx,
+	);
+	await agentSettled({}, context.ctx);
+	assert.equal(mock.sentUserMessages.length, 2);
+	assert.match(context.notifications.at(-1)?.message ?? "", /ended twice/i);
+	assert.equal(context.statuses.get("plan-mode"), "plan active");
+});
+
+test("structured finalization outcomes and cancellation suppress extension retries", async () => {
+	for (const outcome of ["question", "complete", "aborted", "error", "ordinary"] as const) {
+		const mock = createMockPi({ activeTools: ["read"] });
+		planMode(mock.pi);
+		const context = createMockContext();
+		await mock.commands.get("plan")?.handler("start", context.ctx);
+		if (outcome !== "ordinary") await mock.commands.get("plan")?.handler("finalize", context.ctx);
+
+		if (outcome === "question") {
+			const question = mock.tools.find((candidate) => candidate.name === "plan_mode_question")
+				?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
+			assert.ok(question);
+			await question(
+				"question",
+				{
+					questions: [
+						{
+							id: "choice",
+							header: "Choice",
+							question: "Choose one?",
+							options: [
+								{ label: "A", description: "Choose A." },
+								{ label: "B", description: "Choose B." },
+							],
+						},
+					],
+				},
+				undefined,
+				undefined,
+				context.ctx,
+			);
+		}
+		if (outcome === "complete") {
+			const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
+				?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
+			assert.ok(complete);
+			await complete("complete", { plan: "# Done" }, undefined, undefined, context.ctx);
+		}
+
+		await mock.events.get("agent_end")?.[0]?.(
+			{
+				messages: [
+					{
+						role: "assistant",
+						content: "No structured result.",
+						stopReason: outcome === "aborted" ? "aborted" : outcome === "error" ? "error" : "stop",
+					},
+				],
+			},
+			context.ctx,
+		);
+		await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
+		assert.equal(mock.sentUserMessages.length, outcome === "ordinary" ? 0 : 1);
+	}
+});
+
+test("exact canonical user prompt is tracked for one bounded retry", async () => {
+	let pending = true;
+	const mock = createMockPi({ activeTools: ["read"] });
+	planMode(mock.pi);
+	const context = createMockContext({ hasPendingMessages: () => pending });
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	await mock.events.get("message_start")?.[0]?.(
+		{ message: { role: "user", content: FINALIZE_PLAN_PROMPT } },
+		context.ctx,
+	);
+	await mock.events.get("agent_end")?.[0]?.(
+		{ messages: [{ role: "assistant", content: "No tool.", stopReason: "stop" }] },
+		context.ctx,
+	);
+	await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
+	assert.equal(mock.sentUserMessages.length, 0);
+
+	pending = false;
+	await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
+	assert.equal(mock.sentUserMessages.at(-1)?.text, RETRY_FINALIZE_PLAN_PROMPT);
+});
+
+test("session shutdown and explicit exit cancel pending finalization retries", async () => {
+	for (const cancellation of ["shutdown", "exit"] as const) {
+		const mock = createMockPi({ activeTools: ["read"] });
+		planMode(mock.pi);
+		const context = createMockContext();
+		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+		await mock.commands.get("plan")?.handler("start", context.ctx);
+		await mock.commands.get("plan")?.handler("finalize", context.ctx);
+		await mock.events.get("agent_end")?.[0]?.(
+			{ messages: [{ role: "assistant", content: "No tool.", stopReason: "stop" }] },
+			context.ctx,
+		);
+		if (cancellation === "shutdown") {
+			await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
+		} else {
+			await mock.commands.get("plan")?.handler("exit", context.ctx);
+		}
+		await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
+		assert.equal(mock.sentUserMessages.length, 1);
+	}
 });
 
 test("/plan start is a no-op while an active Plan workflow is already ready", async () => {
@@ -782,7 +1021,7 @@ test("legacy plan completion is presented once only after settlement", async () 
 });
 
 test("settled plan presentation waits for idle without pending messages", async () => {
-	let idle = false;
+	let idle = true;
 	let pending = false;
 	let selectCalls = 0;
 	const mock = createMockPi({ activeTools: ["read"] });
@@ -802,6 +1041,7 @@ test("settled plan presentation waits for idle without pending messages", async 
 	assert.ok(execute);
 	await execute("complete", { plan: "# Wait" }, undefined, undefined, context.ctx);
 
+	idle = false;
 	await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
 	idle = true;
 	pending = true;
@@ -1040,6 +1280,8 @@ test("Plan prompt requires the standalone completion contract", () => {
 	assert.match(prompt, /alone as (?:your )?(?:final|last) action/i);
 	assert.match(prompt, /end.*plan_mode_question.*plan_mode_complete/is);
 	assert.match(prompt, /clarification.*plan_mode_complete.*unchanged/is);
+	assert.match(prompt, /listed in the current request's active tools/i);
+	assert.match(prompt, /actual error/i);
 	assert.match(prompt, /behavior-level/i);
 	assert.doesNotMatch(prompt, /<proposed_plan>/i);
 });

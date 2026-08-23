@@ -239,17 +239,39 @@ test("issue 471: an active implementation plan is restored after compaction remo
 	assert.equal(persisted.activeImplementation?.plan, PLAN);
 });
 
-test("implementation transition persists active state before a busy follow-up and rejects repeats", async () => {
+test("implementation transition rejects a busy run before committing and succeeds when idle", async () => {
+	let idle = true;
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
-	const context = createMockContext({ isIdle: () => false });
+	const context = createMockContext({ mode: "tui", hasUI: true, isIdle: () => idle });
 	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
 	assert.ok(complete);
 	await complete("complete", { plan: PLAN }, undefined, undefined, context.ctx);
+	const entriesBeforeBusyAttempt = mock.entries.length;
 
+	idle = false;
+	await mock.commands.get("plan")?.handler("implement", context.ctx);
+	assert.equal(context.statuses.get("plan-mode"), "plan ready");
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
+	assert.equal(mock.entries.length, entriesBeforeBusyAttempt);
+	assert.equal(mock.sentUserMessages.length, 0);
+	assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+	const heldAttempt = {
+		session: (context.ctx as unknown as { sessionManager: object }).sessionManager,
+		group: "agent-workflow",
+		busy: false,
+	};
+	mock.eventBus.emit("workflow:mutex:v1", heldAttempt);
+	assert.equal(heldAttempt.busy, true);
+
+	idle = true;
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), "plan implementing");
 	assert.match(
@@ -257,7 +279,7 @@ test("implementation transition persists active state before a busy follow-up an
 		/implementation plan active/i,
 	);
 	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
-	assert.deepEqual(mock.sentUserMessages.at(-1)?.options, { deliverAs: "followUp" });
+	assert.equal(mock.sentUserMessages.at(-1)?.options, undefined);
 	const activeState = latestState(mock.entries);
 	assert.equal(activeState?.activeImplementation?.plan, PLAN);
 	assert.equal(activeState.activeImplementation?.source, "plan_mode_complete");

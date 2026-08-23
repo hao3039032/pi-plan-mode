@@ -295,7 +295,8 @@ test("failed ready implementation restores a manual Plan thinking level", async 
 	assert.match(context.notifications.at(-1)?.message ?? "", /ready handoff failed/);
 });
 
-test("saved Plan direct routes show, implement, roll back failures, and clear", async () => {
+test("saved Plan direct routes show, reject busy implementation, roll back failures, and clear", async () => {
+	let idle = true;
 	const savedEntry = stateEntry({
 		enabled: false,
 		awaitingAction: false,
@@ -304,7 +305,9 @@ test("saved Plan direct routes show, implement, roll back failures, and clear", 
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext({
-		isIdle: () => false,
+		mode: "tui",
+		hasUI: true,
+		isIdle: () => idle,
 		model: MODEL,
 		modelRegistry: AVAILABLE_MODEL_REGISTRY,
 		sessionManager: {
@@ -333,9 +336,16 @@ test("saved Plan direct routes show, implement, roll back failures, and clear", 
 	mock.rawPi.sendUserMessage = (text: string, options?: unknown) => {
 		mock.sentUserMessages.push({ text, options });
 	};
+	idle = false;
+	await mock.commands.get("plan")?.handler("implement", context.ctx);
+	assert.equal(context.statuses.get("plan-mode"), "plan saved");
+	assert.equal(mock.sentUserMessages.length, 0);
+	assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+
+	idle = true;
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), undefined);
-	assert.deepEqual(mock.sentUserMessages.at(-1)?.options, { deliverAs: "followUp" });
+	assert.equal(mock.sentUserMessages.at(-1)?.options, undefined);
 	assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /Saved implementation plan/);
 	assert.equal(latestState(mock.entries)?.savedPlan, undefined);
 	assert.equal(latestState(mock.entries)?.activeImplementation, undefined);

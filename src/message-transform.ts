@@ -23,6 +23,7 @@ export type ProposedPlanParseResult =
 type SessionMessage = {
 	role?: string;
 	content?: unknown;
+	stopReason?: string;
 };
 
 type TextBlock = {
@@ -68,6 +69,21 @@ export function latestAssistantText(messages: unknown) {
 		if (text) return text;
 	}
 	return "";
+}
+
+export function latestAssistantStopReason(messages: unknown) {
+	if (!Array.isArray(messages)) return undefined;
+	for (const entry of [...messages].reverse()) {
+		const message = (entry as { message?: SessionMessage })?.message ?? (entry as SessionMessage);
+		if (message?.role === "assistant") return message.stopReason;
+	}
+	return undefined;
+}
+
+export function messageTextContent(message: unknown) {
+	return messageText(
+		(message as { message?: SessionMessage })?.message ?? (message as SessionMessage),
+	);
 }
 
 export function messageContainsLegacyPlanModeContextArtifact(message: unknown) {

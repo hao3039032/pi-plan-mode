@@ -142,10 +142,16 @@ test("workflow mutex stale release cannot clear a replacement owner", () => {
 });
 
 test("Plan holds the workflow mutex through planning, ready review, and revision", async () => {
+	let idle = true;
 	const mock = createMockPi({ activeTools: ["read", "write"] });
 	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
 	const sessionManager = { getBranch: () => [], getEntries: () => [] };
-	const context = createMockContext({ mode: "tui", hasUI: true, sessionManager });
+	const context = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		isIdle: () => idle,
+		sessionManager,
+	});
 	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 
@@ -169,6 +175,14 @@ test("Plan holds the workflow mutex through planning, ready review, and revision
 	mock.eventBus.emit(WORKFLOW_MUTEX_CHANNEL, revision);
 	assert.equal(revision.busy, true);
 
+	idle = false;
+	await mock.commands.get("plan")?.handler("exit", context.ctx);
+	const stillHeld = attempt(sessionManager);
+	mock.eventBus.emit(WORKFLOW_MUTEX_CHANNEL, stillHeld);
+	assert.equal(stillHeld.busy, true);
+	assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+
+	idle = true;
 	await mock.commands.get("plan")?.handler("exit", context.ctx);
 	const released = attempt(sessionManager);
 	mock.eventBus.emit(WORKFLOW_MUTEX_CHANNEL, released);

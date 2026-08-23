@@ -83,6 +83,10 @@ Completed and saved plan menus offer **Implement here**, which continues with th
 The direct `/plan implement` compatibility route remains equivalent to **Implement here** and never opens a selector.
 A successful ready-plan export also leaves Plan mode; saved and active implementation exports retain their existing state.
 `show`, `save`, `export`, and `implement` fail closed when no applicable plan is stored; `finalize` requires active Plan mode.
+Pi executes extension commands immediately during streaming, but changing Plan state or handing off implementation during an active run would mix the run's existing system prompt with a new tool contract.
+Plan mode therefore rejects busy start, exit, save, ready-plan export, implementation, state-changing menu action, and configured-shortcut transitions without changing state; wait for the run to settle and retry.
+Prompts submitted while Plan mode is already active remain ordinary Plan follow-ups, and `/plan finalize` remains available as a Plan-preserving follow-up.
+TUI and RPC show a warning for a rejected busy transition, while print and JSON routes throw an observable error.
 
 `/plan export` uses the configured **Export destination**, which defaults to `PLAN.md`.
 Supply a path to override that default for one export.
@@ -148,8 +152,11 @@ Its visible result contains the full plan, and versioned result details let the 
 `plan_mode_complete` uses Pi's `terminate: true` hint.
 Termination is best effort: if a model puts it in a parallel tool batch, Pi terminates the batch early only when every finalized sibling tool also terminates.
 The prompt therefore requires the completion call to be standalone and last.
-The extension deliberately does not infer completion from phrases such as “I will present the plan,” and it does not automatically retry a turn with no plan because research and clarification turns may legitimately remain unfinished.
-If a turn ends without a plan, Plan mode stays active; use `/plan finalize` for explicit recovery.
+The extension deliberately does not infer completion from phrases such as “I will present the plan,” and ordinary research or clarification turns never trigger automatic retries.
+`/plan finalize` and its exact canonical finalization prompt are explicit recovery requests.
+If one of those requests ends normally without a valid structured question or completed plan, Plan mode waits for `agent_settled` and retries once with stronger tool guidance.
+A valid question, accepted completion, user cancellation, explicit exit, workflow supersession, reload, session replacement, or shutdown cancels the retry.
+A second prose-only failure leaves Plan mode active, warns in interactive modes, and requires another explicit `/plan finalize` request.
 
 Legacy sessions and models may still submit one non-empty `<proposed_plan>` block with tags on their own lines.
 That compatibility path remains accepted, but it is not the primary workflow.
@@ -421,6 +428,7 @@ This extension maps Codex's `ModeKind::Plan` behavior onto Pi's extension API:
 - The implementation boundary is explicit: Plan mode restores tools before saving or starting implementation, saving keeps the plan outside ordinary model context, and choosing implementation immediately triggers a normal agent turn with full tool access.
 - The default `clear-on-start` policy follows Codex by using ordinary conversation history only; `clear-after-first-run` and `keep` add explicit exact-plan guarantees.
 - Pi extension safety is approximated with tool classification and fail-closed filtering for every effective tool named `bash`; other non-built-in tools remain user-selected at user risk because Pi does not expose standardized tool mutability metadata.
+- Plan and Normal mode intentionally use different instructions and tool schemas, so the first provider request after a genuine mode transition may miss the prompt cache; later requests can reuse the new stable prefix.
 - Unlike native Codex, this extension uses a terminating Pi tool plus an `agent_settled` ready flow; Pi cannot provide sandbox-level enforcement.
 
 ## 🗂️ Package layout

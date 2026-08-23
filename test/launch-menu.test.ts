@@ -115,6 +115,39 @@ test("customized plan-mode shortcut from settings toggles Plan mode", async () =
 	assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 
+test("customized plan-mode shortcut rejects mode changes during an active run", async () => {
+	let idle = false;
+	const mock = launchFixtureWithSettings(async () => ({
+		kind: "loaded" as const,
+		settings: { thinkingLevel: "inherit", toggleShortcut: "ctrl+shift+p" },
+	}));
+	const context = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		isIdle: () => idle,
+	});
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+	const toggle = mock.shortcuts.get("ctrl+shift+p");
+	assert.ok(toggle);
+
+	await toggle.handler(context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
+	assert.equal(mock.entries.length, 0);
+	assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+
+	idle = true;
+	await toggle.handler(context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
+	const entriesAfterStart = mock.entries.length;
+
+	idle = false;
+	await toggle.handler(context.ctx);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...REQUIRED_PLAN_TOOLS]);
+	assert.equal(mock.entries.length, entriesAfterStart);
+	assert.equal(context.statuses.get("plan-mode"), "plan active");
+	assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
+});
+
 test("customized plan-mode shortcut from settings supports ctrl+alt+p", async () => {
 	const mock = launchFixtureWithSettings(async () => ({
 		kind: "loaded" as const,
