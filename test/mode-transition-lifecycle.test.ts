@@ -16,6 +16,69 @@ function contractEntry(mode: "plan" | "normal") {
 	return { type: "custom_message", ...message };
 }
 
+test("inactive state-only resume and reload leave ordinary context unchanged", async () => {
+	const source = createMockPi({ activeTools: ["read"] });
+	planMode(source.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const sourceContext = createMockContext();
+	await source.events.get("session_start")?.[0]?.({ reason: "startup" }, sourceContext.ctx);
+	await source.events.get("session_shutdown")?.[0]?.({ reason: "quit" }, sourceContext.ctx);
+	const persisted = source.entries.at(-1);
+	assert.ok(persisted);
+
+	const branch = [{ type: "custom", ...persisted }];
+	const sessionManager = {
+		getBranch: () => branch,
+		getEntries: () => branch,
+	};
+	const resumed = createMockPi({ activeTools: ["read"] });
+	planMode(resumed.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const resumedContext = createMockContext({ sessionManager });
+	const contextHook = resumed.events.get("context")?.[0];
+	assert.ok(contextHook);
+	const messages = [{ role: "user", content: "ordinary request" }];
+
+	for (const reason of ["resume", "reload"] as const) {
+		await resumed.events.get("session_start")?.[0]?.({ reason }, resumedContext.ctx);
+		const transformed = (await contextHook({ messages }, resumedContext.ctx)) as {
+			messages: unknown[];
+		};
+		assert.deepEqual(transformed.messages, messages, reason);
+	}
+});
+
+test("internal mode contracts cannot be selected as tree navigation targets", async () => {
+	const contract = contractEntry("plan");
+	const ordinary = { type: "message", message: { role: "assistant" } };
+	const sessionManager = {
+		getBranch: () => [],
+		getEntries: () => [],
+		getEntry: (id: string) => (id === "contract" ? contract : ordinary),
+	};
+	const mock = createMockPi({ activeTools: ["read"] });
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const context = createMockContext({ hasUI: true, sessionManager });
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	const stateEntriesBefore = mock.entries.length;
+	const beforeTree = mock.events.get("session_before_tree")?.[0];
+	assert.ok(beforeTree);
+
+	const blocked = await beforeTree(
+		{ preparation: { targetId: "contract" }, signal: new AbortController().signal },
+		context.ctx,
+	);
+	assert.deepEqual(blocked, { cancel: true });
+	assert.equal(mock.entries.length, stateEntriesBefore);
+	assert.equal(context.statuses.get("plan-mode"), "plan active");
+	assert.match(context.notifications.at(-1)?.message ?? "", /transition markers are internal/u);
+
+	const allowed = await beforeTree(
+		{ preparation: { targetId: "ordinary" }, signal: new AbortController().signal },
+		context.ctx,
+	);
+	assert.equal(allowed, undefined);
+});
+
 test("manual tree navigation restores branch-owned mode state without changing the tool envelope", async () => {
 	const branch: unknown[] = [];
 	const sessionManager = {

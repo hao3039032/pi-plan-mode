@@ -46,6 +46,7 @@ import {
 	createModeContractMessage,
 	hasModeContractArtifact,
 	latestModeContract,
+	MODE_CONTRACT_MESSAGE_TYPE,
 	type PlanModeContract,
 	reconcileModeContract,
 } from "./mode-contract.js";
@@ -459,14 +460,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		implementationRetention.reset();
 		settings = { thinkingLevel: "inherit" };
 		const branch = ctx.sessionManager.getBranch();
-		publishedContractMode = latestModeContract(branch)?.mode;
-		modeContractsRelevant =
-			hasModeContractArtifact(branch) ||
-			branch.some(
-				(entry: { type?: string; customType?: string }) =>
-					entry.type === "custom" && entry.customType === STATE_ENTRY_TYPE,
-			);
 		const restoredState = restorePlanModeState(branch, STATE_ENTRY_TYPE);
+		restoreModeContractTracking(branch, restoredState);
 		state = { enabled: false, awaitingAction: false };
 		await applyPlanModeSettings(generation, ctx, true);
 		if (generation !== menuGeneration || menuController.signal.aborted) return;
@@ -491,6 +486,20 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		updateUi(ctx);
 	});
 
+	pi.on("session_before_tree", (event, ctx) => {
+		const target = ctx.sessionManager.getEntry(event.preparation.targetId);
+		if (target?.type !== "custom_message" || target.customType !== MODE_CONTRACT_MESSAGE_TYPE) {
+			return;
+		}
+		if (ctx.hasUI) {
+			ctx.ui.notify(
+				"Plan mode transition markers are internal. Select the adjacent conversation entry instead.",
+				"warning",
+			);
+		}
+		return { cancel: true };
+	});
+
 	pi.on("session_tree", (_event, ctx) => {
 		advanceWorkflowGeneration();
 		menuGeneration += 1;
@@ -500,14 +509,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		latestCommandContext = undefined;
 		implementationRetention.reset();
 		const branch = ctx.sessionManager.getBranch();
-		publishedContractMode = latestModeContract(branch)?.mode;
-		modeContractsRelevant =
-			hasModeContractArtifact(branch) ||
-			branch.some(
-				(entry: { type?: string; customType?: string }) =>
-					entry.type === "custom" && entry.customType === STATE_ENTRY_TYPE,
-			);
-		if (!installRestoredState(restorePlanModeState(branch, STATE_ENTRY_TYPE), ctx)) return;
+		const restoredState = restorePlanModeState(branch, STATE_ENTRY_TYPE);
+		restoreModeContractTracking(branch, restoredState);
+		if (!installRestoredState(restoredState, ctx)) return;
 		implementationRetention.restore(state.activeImplementation);
 		startPlanModeSettingsWatch(menuGeneration);
 		updateUi(ctx);
@@ -630,14 +634,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			refreshStateBeforeFirstAgentStart = false;
 			implementationRetention.reset();
 			const branch = ctx.sessionManager.getBranch();
-			publishedContractMode = latestModeContract(branch)?.mode;
-			modeContractsRelevant =
-				hasModeContractArtifact(branch) ||
-				branch.some(
-					(entry: { type?: string; customType?: string }) =>
-						entry.type === "custom" && entry.customType === STATE_ENTRY_TYPE,
-				);
-			if (!installRestoredState(restorePlanModeState(branch, STATE_ENTRY_TYPE), ctx)) return;
+			const restoredState = restorePlanModeState(branch, STATE_ENTRY_TYPE);
+			restoreModeContractTracking(branch, restoredState);
+			if (!installRestoredState(restoredState, ctx)) return;
 			implementationRetention.restore(state.activeImplementation);
 			updateUi(ctx);
 		}
@@ -805,6 +804,15 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		updateUi(ctx);
 		if (wasEnabled) releaseWorkflowOwner();
 		return true;
+	}
+
+	function restoreModeContractTracking(branch: unknown[], restoredState: PlanModeState) {
+		publishedContractMode = latestModeContract(branch)?.mode;
+		modeContractsRelevant =
+			hasModeContractArtifact(branch) ||
+			restoredState.enabled ||
+			restoredState.savedPlan !== undefined ||
+			restoredState.activeImplementation !== undefined;
 	}
 
 	function publishModeContract(mode: PlanModeContract, ctx: ExtensionContext) {

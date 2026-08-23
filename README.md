@@ -56,7 +56,9 @@ Ordinary linear turns do not rewrite or duplicate these contracts.
 The `context` hook filters legacy repeated `plan-mode-context` artifacts but preserves current transition messages.
 When compaction removes the effective physical transition, the hook inserts one canonical fallback at a deterministic retained-history boundary.
 Repeated transforms leave that fallback in place instead of moving it to the newest turn.
+An inactive legacy state entry alone does not inject a Normal contract, so sessions that never entered Plan mode keep their ordinary context after resume or reload.
 Manual `/tree` navigation restores branch-owned Plan state and chooses the matching effective contract without navigating automatically or adding a branch summary.
+Pi currently lists hidden custom transition messages in `/tree`; Plan mode rejects those internal targets, so select an adjacent conversation entry instead.
 
 The extension keeps its base system prompt and ordered startup tool definitions unchanged across start, off, exit, save, export, and implementation transitions.
 This makes the reusable provider prefix stable; it does not guarantee a cache hit.
