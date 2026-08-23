@@ -17,11 +17,11 @@ import planMode, {
 	stripProposedPlanBlocksFromMessage,
 } from "../src/plan-mode.js";
 
-test("plan-mode registers flag, question tool, command, and safety hooks", () => {
+test("plan-mode registers question tools, command, and safety hooks without a CLI flag", () => {
 	const mock = createMockPi({ activeTools: ["read", "bash"] });
 	planMode(mock.pi);
 
-	assert.ok(mock.flags.has("plan"));
+	assert.equal(mock.flags.has("plan"), false);
 	assert.deepEqual(
 		mock.tools.map((tool) => tool.name),
 		["plan_mode_question", "plan_mode_complete"],

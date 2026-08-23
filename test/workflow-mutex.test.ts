@@ -241,49 +241,39 @@ test("busy direct starts preserve state in every command mode", async () => {
 	}
 });
 
-test("busy restored and --plan activation performs only the startup envelope write", async () => {
-	for (const restoredData of [
-		{ enabled: true, awaitingAction: false },
-		{ enabled: false, awaitingAction: false },
-	]) {
-		const entry = persistedPlanState(restoredData);
-		const sessionManager = { getBranch: () => [entry], getEntries: () => [entry] };
-		const mock = createMockPi({ activeTools: ["goal_complete"], thinkingLevel: "high" });
-		let activeToolWrites = 0;
-		const setActiveTools = mock.rawPi.setActiveTools.bind(mock.rawPi);
-		mock.rawPi.setActiveTools = (names) => {
-			activeToolWrites += 1;
-			setActiveTools(names);
-		};
-		blockAgentWorkflow(mock, sessionManager);
-		planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
-		if (!restoredData.enabled) {
-			const flag = mock.flags.get("plan");
-			assert.ok(flag);
-			flag.value = true;
-		}
-		const context = createMockContext({ mode: "tui", hasUI: true, sessionManager });
+test("busy restored activation performs only the startup envelope write", async () => {
+	const entry = persistedPlanState({ enabled: true, awaitingAction: false });
+	const sessionManager = { getBranch: () => [entry], getEntries: () => [entry] };
+	const mock = createMockPi({ activeTools: ["goal_complete"], thinkingLevel: "high" });
+	let activeToolWrites = 0;
+	const setActiveTools = mock.rawPi.setActiveTools.bind(mock.rawPi);
+	mock.rawPi.setActiveTools = (names) => {
+		activeToolWrites += 1;
+		setActiveTools(names);
+	};
+	blockAgentWorkflow(mock, sessionManager);
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const context = createMockContext({ mode: "tui", hasUI: true, sessionManager });
 
-		await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-		assert.equal(activeToolWrites, 1);
-		assert.deepEqual(mock.rawPi.getActiveTools(), [
-			"goal_complete",
-			"plan_mode_question",
-			"plan_mode_complete",
-		]);
-		assert.equal(mock.thinkingLevel, "high");
-		assert.equal(mock.thinkingLevels.length, 0);
-		assert.equal(mock.entries.length, 0);
-		assert.equal(context.statuses.get("plan-mode"), undefined);
-		assert.match(context.notifications[0]?.message ?? "", /was not restored/u);
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	assert.equal(activeToolWrites, 1);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"goal_complete",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
+	assert.equal(mock.thinkingLevel, "high");
+	assert.equal(mock.thinkingLevels.length, 0);
+	assert.equal(mock.entries.length, 0);
+	assert.equal(context.statuses.get("plan-mode"), undefined);
+	assert.match(context.notifications[0]?.message ?? "", /was not restored/u);
 
-		const beforeStart = await mock.events.get("before_agent_start")?.[0]?.(
-			{ systemPrompt: "base", prompt: "continue" },
-			context.ctx,
-		);
-		assert.equal(beforeStart, undefined);
-		assert.equal(mock.sentUserMessages.length, 0);
-	}
+	const beforeStart = await mock.events.get("before_agent_start")?.[0]?.(
+		{ systemPrompt: "base", prompt: "continue" },
+		context.ctx,
+	);
+	assert.equal(beforeStart, undefined);
+	assert.equal(mock.sentUserMessages.length, 0);
 });
 
 test("busy menu, selected-tool, shortcut, and active-implementation starts stay atomic", async () => {

@@ -21,6 +21,7 @@ test("declared generated entry preserves registration and partial lifecycle clea
 		const { default: extension } = await import("../dist/index.js");
 		const mock = createMockPi();
 		await extension(mock.pi);
+		assert.equal(mock.flags.has("plan"), false);
 		assert.ok(mock.commands.has("plan"));
 		assert.ok(mock.events.has("session_start"));
 		assert.ok(mock.events.has("session_shutdown"));

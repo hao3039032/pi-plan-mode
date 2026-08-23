@@ -422,7 +422,7 @@ test("saved Plan implementation preflight retains state on auth failure or sessi
 	assert.equal(latestState(replaced.entries)?.savedPlan?.plan, PLAN);
 });
 
-test("saved Plan blocks replacement workflows and --plan restores it as ready", async () => {
+test("saved Plan survives resume and blocks replacement workflows", async () => {
 	const savedEntry = stateEntry({
 		enabled: false,
 		awaitingAction: false,
@@ -452,28 +452,6 @@ test("saved Plan blocks replacement workflows and --plan restores it as ready", 
 	assert.match(context.notifications.at(-1)?.message ?? "", /implement or clear/i);
 	await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
 	assert.equal(latestState(mock.entries)?.savedPlan?.plan, PLAN);
-
-	const flagged = createMockPi({ activeTools: ["read", "edit"] });
-	planMode(flagged.pi);
-	const flag = flagged.flags.get("plan");
-	assert.ok(flag);
-	flag.value = true;
-	const flaggedContext = createMockContext({
-		sessionManager: {
-			getBranch: () => [savedEntry],
-			getEntries: () => [savedEntry],
-		},
-	});
-	await flagged.events.get("session_start")?.[0]?.({}, flaggedContext.ctx);
-	assert.equal(flaggedContext.statuses.get("plan-mode"), "plan ready");
-	assert.equal(latestState(flagged.entries)?.latestPlan, PLAN);
-	assert.equal(latestState(flagged.entries)?.savedPlan, undefined);
-	assert.deepEqual(flagged.rawPi.getActiveTools(), [
-		"read",
-		"edit",
-		"plan_mode_question",
-		"plan_mode_complete",
-	]);
 });
 
 test("saved Plan no-UI management is observable without changing state", async () => {

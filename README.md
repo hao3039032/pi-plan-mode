@@ -8,7 +8,7 @@ This independently installable extension adds a Codex-like `/plan` collaboration
 
 ## ✨ Features
 
-- Starts and manages Plan mode through `/plan`, `/plan <prompt>`, or the `--plan` startup flag.
+- Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`.
 - Keeps one stable model-visible tool envelope while a runtime Plan policy blocks mutations and unsafe shell forms.
 - Requires structured questions for important ambiguity and explicit completion for a decision-ready plan.
 - Reviews the complete plan before implementation, export, save, continued planning, or discard.
@@ -92,7 +92,7 @@ Launch-menu policy changes remain a draft until **Done — start with this polic
 Use `/plan start` when you want to enter Plan mode directly without sending a model message.
 Use `/plan <prompt>` to enter Plan mode and immediately submit `<prompt>` as the first Plan-mode user message.
 The exact argument `start` is reserved for direct activation; longer text such as `/plan start a migration` remains an inline planning prompt.
-`--plan` also remains a direct activation path.
+The extension does not register a startup flag; run `/plan start` after launch for direct activation.
 
 Use **Choose tools, then start…** or the `/plan tools` compatibility shortcut to choose a session-specific Plan policy override before Planning starts.
 Both routes use the same draft selector: **Done — start with this policy** stores the allowlist and starts the workflow, while cancellation leaves Plan mode off and changes nothing.
@@ -198,7 +198,7 @@ The destination still loads its normal `AGENTS.md`, skills, project resources, a
 Choosing **Export plan…** asks for a destination, writes the plan, appends the Normal contract, restores inherited thinking, and leaves Plan mode without starting a model turn or changing active tools.
 Choosing **Save for later**—or running `/plan save`—instead stores one plan in the current Pi session before leaving Plan mode.
 
-When a workflow was started only with `--plan` and no `/plan` command has run in that session, the automatic menu cannot obtain Pi's command-only session replacement capability; choosing fresh asks you to reopen `/plan`, where the same action is available.
+When a resumed active Plan workflow completes before `/plan` has run in that resumed session, the automatic menu cannot obtain Pi's command-only session replacement capability; choosing fresh asks you to reopen `/plan`, where the same action is available.
 A successful fresh handoff does not delete or consume the source planning session.
 Resume it later to inspect or hand off the ready/saved plan again; this deliberate duplication is the recovery path if the destination work is abandoned.
 In-memory sessions create an unlinked fresh session because no parent file exists.
@@ -214,7 +214,7 @@ It does not expire automatically, cross into a new session, or participate in or
 Open `/plan` to Show, Implement here, Start fresh and implement, Export, open Settings, or Clear it; `/plan show`, `/plan implement`, `/plan export [path]`, and `/plan exit`/`off` retain their direct routes in TUI and RPC.
 Fresh implementation checks idle state, the selected model, and authentication before session replacement; Implement here keeps its established preflight behavior.
 Starting another workflow with `/plan start`, `/plan <prompt>`, or `/plan tools` is blocked until the saved plan is implemented or cleared, so the single saved slot is never silently overwritten.
-Resuming that session with `--plan` moves the saved plan back to ready Plan mode.
+Resuming that session keeps the plan saved; open `/plan` to review, implement, export, or clear it.
 Cancellation or failed implementation preflight leaves it unchanged.
 
 Text print and JSON modes cannot display the bare `/plan` menu and reject that route before changing state; use `/plan start` for direct no-prompt activation or `/plan <prompt>` to start planning with a prompt.

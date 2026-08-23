@@ -177,12 +177,6 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		},
 	});
 
-	pi.registerFlag("plan", {
-		description: "Start in Codex-like Plan mode",
-		type: "boolean",
-		default: false,
-	});
-
 	pi.registerTool({
 		name: PLAN_MODE_QUESTION_TOOL_NAME,
 		label: "Plan question",
@@ -462,23 +456,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		await applyPlanModeSettings(generation, ctx, true);
 		if (generation !== menuGeneration || menuController.signal.aborted) return;
 		startPlanModeSettingsWatch(generation);
-		const persistFlagActivation = pi.getFlag("plan") === true && !restoredState.enabled;
-		const candidate = persistFlagActivation
-			? restoredState.savedPlan
-				? {
-						...restoredState,
-						enabled: true,
-						latestPlan: restoredState.savedPlan.plan,
-						latestPlanSource: restoredState.savedPlan.source,
-						awaitingAction: true,
-						savedPlan: undefined,
-						activeImplementation: undefined,
-					}
-				: { ...restoredState, enabled: true, activeImplementation: undefined }
-			: restoredState;
-		if (!installRestoredState(candidate, ctx)) return;
+		if (!installRestoredState(restoredState, ctx)) return;
 		implementationRetention.restore(state.activeImplementation);
-		if (persistFlagActivation && state.enabled) persistState();
 		updateUi(ctx);
 	});
 

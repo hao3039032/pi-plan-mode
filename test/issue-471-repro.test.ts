@@ -757,38 +757,6 @@ test("a superseded session start cannot publish stale settings or UI state", asy
 	assert.deepEqual(transformed.messages, [{ role: "branchSummary", summary: "current session" }]);
 });
 
-test("the --plan flag supersedes a resumed active implementation", async () => {
-	const activeImplementation: ActiveImplementationPlan = {
-		id: "implementation-1",
-		plan: PLAN,
-		source: "plan_mode_complete",
-		startedAt: 42,
-	};
-	const resumedEntry = stateEntry({
-		enabled: false,
-		awaitingAction: false,
-		activeImplementation,
-	});
-	const mock = createMockPi({ activeTools: ["read", "edit"] });
-	planMode(mock.pi);
-	const planFlag = mock.flags.get("plan");
-	assert.ok(planFlag);
-	planFlag.value = true;
-	const context = createMockContext({
-		sessionManager: {
-			getBranch: () => [resumedEntry],
-			getEntries: () => [resumedEntry],
-		},
-	});
-
-	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-	assert.equal(context.statuses.get("plan-mode"), "plan active");
-	assert.equal(latestState(mock.entries)?.enabled, true);
-	assert.equal(latestState(mock.entries)?.activeImplementation, undefined);
-	await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
-	assert.equal(latestState(mock.entries)?.activeImplementation, undefined);
-});
-
 test("resume and shutdown retain branch-local implementation state while clearing session UI", async () => {
 	const activeImplementation: ActiveImplementationPlan = {
 		id: "implementation-1",
