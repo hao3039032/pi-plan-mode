@@ -1,4 +1,5 @@
 import {
+	findHistoryImplementationArtifact,
 	injectActiveImplementationContext,
 	isEmptyAssistantMessage,
 	messageContainsExactPlanModeImplementationHandoff,
@@ -14,18 +15,18 @@ import type { ActiveImplementationPlan, PlanModeState } from "./state.js";
 
 export function retentionLabel(retention: ImplementationPlanRetention) {
 	return {
-		keep: "Keep plan active",
-		"clear-on-start": "Use plan for handoff only",
-		"clear-after-first-run": "Clear after first implementation run",
+		"clear-on-start": "Conversation history only",
+		"clear-after-first-run": "First implementation run",
+		keep: "Until manually cleared",
 	}[retention];
 }
 
 export function implementationRetentionPreview(retention: ImplementationPlanRetention) {
 	return {
-		keep: "After Implement: Keep plan active until /plan exit.",
-		"clear-on-start":
-			"After Implement: Use the plan for the implementation handoff only, then clear it.",
-		"clear-after-first-run": "After Implement: Clear after the first implementation run settles.",
+		"clear-on-start": "Plan availability: Use conversation history only.",
+		"clear-after-first-run":
+			"Plan availability: Guarantee the exact plan through the first implementation run.",
+		keep: "Plan availability: Guarantee the exact plan until /plan exit.",
 	}[retention];
 }
 
@@ -74,10 +75,25 @@ export function createImplementationRetentionCoordinator(): ImplementationRetent
 				: messagesWithoutPlanContext.filter(
 						(message) => !messageContainsPlanModeImplementationHandoff(message),
 					);
+			const historyArtifact = activeImplementation
+				? undefined
+				: findHistoryImplementationArtifact(inactiveMessages);
+			const historyArtifactMessage = historyArtifact
+				? inactiveMessages[historyArtifact.messageIndex]
+				: undefined;
 			const filteredMessages = inactiveMessages
-				.filter((message) => !messageContainsInactivePlanModeArtifact(message))
-				.map(stripProposedPlanBlocksFromMessage)
-				.map(stripPlanModeCompletionCallsFromMessage)
+				.filter(
+					(message) =>
+						message === historyArtifactMessage || !messageContainsInactivePlanModeArtifact(message),
+				)
+				.map((message) =>
+					message === historyArtifactMessage && historyArtifact?.kind === "legacy"
+						? message
+						: stripProposedPlanBlocksFromMessage(message),
+				)
+				.map((message) =>
+					stripPlanModeCompletionCallsFromMessage(message, historyArtifact?.toolCallId),
+				)
 				.filter((message) => !isEmptyAssistantMessage(message));
 			if (!activeImplementation) return { messages: filteredMessages };
 

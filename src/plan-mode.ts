@@ -20,7 +20,9 @@ import {
 	setPlanThinkingLevel,
 } from "./extension-runtime.js";
 import {
+	formatHistoryImplementationPrompt,
 	formatImplementationHandoff,
+	formatTransferredPlanPrompt,
 	startFreshImplementationFromState,
 } from "./fresh-implementation.js";
 import {
@@ -837,6 +839,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		const previousIntent = readyPresentationIntent;
 		const previousToolSnapshot = previousTools;
 		const wasEnabled = state.enabled;
+		const retention = configuredImplementationPlanRetention(settings);
+		const usesConversationHistory = retention === "clear-on-start";
 		readyPresentationIntent = undefined;
 		state = {
 			...state,
@@ -845,13 +849,15 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			latestPlanSource: undefined,
 			awaitingAction: false,
 			savedPlan: undefined,
-			activeImplementation: {
-				id: randomUUID(),
-				plan,
-				source,
-				startedAt: Date.now(),
-				retention: configuredImplementationPlanRetention(settings),
-			},
+			activeImplementation: usesConversationHistory
+				? undefined
+				: {
+						id: randomUUID(),
+						plan,
+						source,
+						startedAt: Date.now(),
+						retention,
+					},
 			manualThinkingLevel: undefined,
 		};
 		if (wasEnabled) {
@@ -862,7 +868,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		persistState();
 		updateUi(ctx);
 
-		const sent = sendPlanModeUserMessage(formatImplementationHandoff(plan), ctx);
+		const handoff = usesConversationHistory
+			? wasEnabled
+				? formatHistoryImplementationPrompt()
+				: formatTransferredPlanPrompt(plan, false)
+			: formatImplementationHandoff(plan);
+		const sent = sendPlanModeUserMessage(handoff, ctx);
 		if (!sent) {
 			state = previousState;
 			readyPresentationIntent = previousIntent;

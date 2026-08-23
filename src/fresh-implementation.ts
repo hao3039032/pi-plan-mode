@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { PLAN_HISTORY_IMPLEMENTATION_PROMPT } from "./message-transform.js";
 import type { ImplementationPlanRetention } from "./settings.js";
 import type { PlanCompletionSource, PlanModeState } from "./state.js";
 
@@ -30,6 +31,15 @@ export type FreshImplementationResult =
 
 export function formatImplementationHandoff(plan: string) {
 	return `Plan mode is now disabled. Full tool access is restored. Implement this proposed plan now:\n\n${plan}`;
+}
+
+export function formatHistoryImplementationPrompt() {
+	return PLAN_HISTORY_IMPLEMENTATION_PROMPT;
+}
+
+export function formatTransferredPlanPrompt(plan: string, fresh: boolean) {
+	const destination = fresh ? " in a fresh context" : "";
+	return `A previous agent produced the plan below to accomplish the user's task. Implement the plan${destination}. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification.\n\n${plan}`;
 }
 
 export async function startFreshImplementationFromState(
@@ -84,19 +94,23 @@ export async function startFreshImplementationSession(
 	if (!(await preflightModel(ctx, request.isCurrent))) return { kind: "rejected" };
 	if (!request.isCurrent()) return { kind: "stale" };
 
-	const activeImplementation = {
-		id: randomUUID(),
-		plan: request.plan,
-		source: request.source,
-		startedAt: Date.now(),
-		retention: request.retention,
-	};
-	const destinationState: PlanModeState = {
-		enabled: false,
-		awaitingAction: false,
-		activeImplementation,
-	};
-	const handoff = formatImplementationHandoff(request.plan);
+	const usesConversationHistory = request.retention === "clear-on-start";
+	const destinationState: PlanModeState | undefined = usesConversationHistory
+		? undefined
+		: {
+				enabled: false,
+				awaitingAction: false,
+				activeImplementation: {
+					id: randomUUID(),
+					plan: request.plan,
+					source: request.source,
+					startedAt: Date.now(),
+					retention: request.retention,
+				},
+			};
+	const handoff = usesConversationHistory
+		? formatTransferredPlanPrompt(request.plan, true)
+		: formatImplementationHandoff(request.plan);
 	const parentSession = ctx.sessionManager.getSessionFile();
 	let setupError: string | undefined;
 	let kickoffError: string | undefined;
@@ -107,13 +121,17 @@ export async function startFreshImplementationSession(
 	try {
 		result = await ctx.newSession({
 			...(parentSession ? { parentSession } : {}),
-			setup: async (sessionManager) => {
-				try {
-					sessionManager.appendCustomEntry(request.stateEntryType, destinationState);
-				} catch (error: unknown) {
-					setupError = safeErrorDetail(error);
-				}
-			},
+			...(destinationState
+				? {
+						setup: async (sessionManager) => {
+							try {
+								sessionManager.appendCustomEntry(request.stateEntryType, destinationState);
+							} catch (error: unknown) {
+								setupError = safeErrorDetail(error);
+							}
+						},
+					}
+				: {}),
 			withSession: async (replacementCtx) => {
 				if (setupError) {
 					recoverSetupFailure(replacementCtx, handoff, setupError);
@@ -127,8 +145,11 @@ export async function startFreshImplementationSession(
 					);
 				} catch (error: unknown) {
 					kickoffError = safeErrorDetail(error);
+					if (usesConversationHistory) replacementCtx.ui.setEditorText(handoff);
 					replacementCtx.ui.notify(
-						`Fresh session created, but implementation did not start: ${kickoffError}. Send a message to continue, use /plan exit to clear the active plan, or resume the parent planning session.`,
+						usesConversationHistory
+							? `Fresh session created, but implementation did not start: ${kickoffError}. The implementation request is in the editor; submit it or resume the parent planning session.`
+							: `Fresh session created, but implementation did not start: ${kickoffError}. Send a message to continue, use /plan exit to clear the active plan, or resume the parent planning session.`,
 						"error",
 					);
 				}

@@ -119,7 +119,7 @@ test("Plan-mode settings validate implementation retention and export defaults",
 	assert.equal(configuredPlanExportPath(normalizedPath), "docs/PLAN.md");
 	const defaults = normalizePlanModeSettings({});
 	assert.ok(defaults);
-	assert.equal(configuredImplementationPlanRetention(defaults), "keep");
+	assert.equal(configuredImplementationPlanRetention(defaults), "clear-on-start");
 	assert.equal(configuredPlanExportPath(defaults), "PLAN.md");
 	for (const defaultPlanExportPath of [
 		"",

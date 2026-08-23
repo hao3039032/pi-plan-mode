@@ -533,11 +533,8 @@ test("Plan lifecycle enters with a prompt and hands a valid plan to implementati
 	]);
 	await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
 	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "custom"]);
-	assert.match(
-		mock.sentUserMessages.at(-1)?.text ?? "",
-		/Implement this proposed plan now:\n\n# Ship it/,
-	);
-	assert.equal(context.statuses.get("plan-mode"), "plan implementing");
+	assert.equal(mock.sentUserMessages.at(-1)?.text, "Implement the plan.");
+	assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 
 test("plan show displays only a stored plan without triggering a model turn", async () => {
@@ -633,9 +630,9 @@ test("plan implement fails closed without a plan and hands off a stored plan", a
 	assert.ok(execute);
 	await execute("complete", { plan: "# Implement me" }, undefined, undefined, context.ctx);
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
-	assert.equal(context.statuses.get("plan-mode"), "plan implementing");
+	assert.equal(context.statuses.get("plan-mode"), undefined);
 	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "custom"]);
-	assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /# Implement me/);
+	assert.equal(mock.sentUserMessages.at(-1)?.text, "Implement the plan.");
 });
 
 test("failed finalize delivery keeps Plan mode active", async () => {

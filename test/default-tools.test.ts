@@ -376,7 +376,7 @@ test("implementation handoff restores tools after using configured defaults", as
 		await execute("complete", { plan: "# Configured handoff" }, undefined, undefined, context.ctx);
 		await mock.commands.get("plan")?.handler("implement", context.ctx);
 		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "custom"]);
-		assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /# Configured handoff/);
+		assert.equal(mock.sentUserMessages.at(-1)?.text, "Implement the plan.");
 	});
 });
 

@@ -60,7 +60,7 @@ test("Plan settings show five flat workflow rows without materializing a missing
 		assert.match(frame, /Plan Mode Settings/);
 		assert.match(frame, /Plan thinking\s+inherit/);
 		assert.match(frame, /Plan tools\s+Automatic safe built-ins/);
-		assert.match(frame, /After Implement\s+Keep plan active/);
+		assert.match(frame, /Plan availability\s+Conversation history only/);
 		assert.match(frame, /Export destination\s+PLAN\.md/);
 		assert.match(frame, /Plan mode shortcut\s+none/);
 		assert.ok(tui.render(34).every((line) => visibleWidth(line) <= 34));
@@ -166,7 +166,7 @@ test("Default tools retain configured names that are unavailable in the current 
 	});
 });
 
-test("After Implement cycles outcomes and export destination saves, previews, resets, and cancels", async () => {
+test("Plan availability cycles outcomes and export destination saves, previews, resets, and cancels", async () => {
 	await withSettingsMenu(async ({ settingsPath, tui, ctx, saved }) => {
 		const running = showPlanModeSettings(ctx, menuOptions(settingsPath, saved));
 		await tui.waitForOpen();
@@ -175,8 +175,8 @@ test("After Implement cycles outcomes and export destination saves, previews, re
 		tui.press("tui.select.confirm");
 		await tui.waitForPending();
 		await tui.waitForOpen();
-		assert.equal(saved.at(-1)?.implementationPlanRetention, "clear-on-start");
-		assert.match(tui.render().join("\n"), /After Implement\s+Use plan for handoff only/);
+		assert.equal(saved.at(-1)?.implementationPlanRetention, "clear-after-first-run");
+		assert.match(tui.render().join("\n"), /Plan availability\s+First implementation run/);
 
 		tui.press("tui.select.down");
 		tui.press("tui.select.confirm");
@@ -338,19 +338,19 @@ test("RPC Settings changes retention and export destination with the same flat n
 				options: [
 					"Plan thinking (inherit)",
 					"Plan tools (Automatic safe built-ins)",
-					"After Implement (Keep plan active)",
+					"Plan availability (Conversation history only)",
 					"Export destination (PLAN.md)",
 					"Plan mode shortcut (none)",
 					"Back",
 				],
-				response: "After Implement (Keep plan active)",
+				response: "Plan availability (Conversation history only)",
 			},
 			{
 				kind: "select",
 				options: [
 					"Plan thinking (inherit)",
 					"Plan tools (Automatic safe built-ins)",
-					"After Implement (Use plan for handoff only)",
+					"Plan availability (First implementation run)",
 					"Export destination (PLAN.md)",
 					"Plan mode shortcut (none)",
 					"Back",
@@ -367,7 +367,7 @@ test("RPC Settings changes retention and export destination with the same flat n
 				options: [
 					"Plan thinking (inherit)",
 					"Plan tools (Automatic safe built-ins)",
-					"After Implement (Use plan for handoff only)",
+					"Plan availability (First implementation run)",
 					"Export destination (rpc/PLAN.md)",
 					"Plan mode shortcut (none)",
 					"Back",
@@ -379,7 +379,7 @@ test("RPC Settings changes retention and export destination with the same flat n
 		const saved: PlanModeSettings[] = [];
 		await showPlanModeSettings(context.ctx, menuOptions(settingsPath, saved));
 		rpc.assertConsumed();
-		assert.equal(saved.at(-1)?.implementationPlanRetention, "clear-on-start");
+		assert.equal(saved.at(-1)?.implementationPlanRetention, "clear-after-first-run");
 		assert.equal(saved.at(-1)?.defaultPlanExportPath, "rpc/PLAN.md");
 	} finally {
 		await rm(directory, { recursive: true, force: true });
@@ -393,7 +393,7 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
 			options: [
 				"Plan thinking (inherit)",
 				"Plan tools (Automatic safe built-ins)",
-				"After Implement (Keep plan active)",
+				"Plan availability (Conversation history only)",
 				"Export destination (PLAN.md)",
 				"Plan mode shortcut (none)",
 				"Back",

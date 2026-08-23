@@ -150,7 +150,10 @@ test("an active Settings save changes the next export without changing active st
 			settingsPath,
 			readSettings: async () => ({
 				kind: "loaded" as const,
-				settings: { thinkingLevel: "inherit" as const },
+				settings: {
+					thinkingLevel: "inherit" as const,
+					implementationPlanRetention: "keep" as const,
+				},
 			}),
 		});
 		let openedSettings = false;
@@ -429,6 +432,7 @@ test("completion and management TUI menus preview and use the configured export 
 					kind: "loaded" as const,
 					settings: {
 						thinkingLevel: "inherit" as const,
+						implementationPlanRetention: "keep" as const,
 						defaultPlanExportPath: expectedPath,
 					},
 				}),

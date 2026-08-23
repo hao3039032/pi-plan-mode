@@ -8,6 +8,7 @@ import {
 } from "../../../test/support.js";
 import {
 	formatImplementationHandoff,
+	formatTransferredPlanPrompt,
 	startFreshImplementationFromState,
 	startFreshImplementationSession,
 } from "../src/fresh-implementation.js";
@@ -93,7 +94,8 @@ test("ready choice descriptions stay bounded and cancellation has no side effect
 		await showReadyPlanMenu(context.ctx, {
 			signal: owner.signal,
 			isCurrent: () => !owner.signal.aborted,
-			implementationOutcome: () => "After Implement: Keep plan active\u001b]8;;unsafe\u0007.",
+			implementationOutcome: () =>
+				"Plan availability: Guarantee the exact plan until /plan exit\u001b]8;;unsafe\u0007.",
 			getExportDestination: () => ({ configuredPath: "PLAN.md", resolvedPath: "/tmp/PLAN.md" }),
 			implementHere: () => {
 				actionCalls += 1;
@@ -247,6 +249,7 @@ test("saved plans can start fresh without consuming the source session state", a
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi, MISSING_SETTINGS);
 	let destinationState: unknown;
+	let replacementMessage = "";
 	let newSessionCalls = 0;
 	const context = createMockContext({
 		mode: "rpc",
@@ -272,7 +275,11 @@ test("saved plans can start fresh without consuming the source session state", a
 					return "destination-state";
 				},
 			});
-			await options.withSession?.({ sendUserMessage: async () => undefined });
+			await options.withSession?.({
+				sendUserMessage: async (message) => {
+					replacementMessage = message;
+				},
+			});
 			return { cancelled: false };
 		},
 	});
@@ -282,10 +289,9 @@ test("saved plans can start fresh without consuming the source session state", a
 	assert.equal(newSessionCalls, 1);
 	assert.equal(context.statuses.get("plan-mode"), "plan saved");
 	assert.equal(mock.entries.length, 0);
-	assert.equal(
-		(destinationState as { activeImplementation?: { plan?: string } }).activeImplementation?.plan,
-		PLAN,
-	);
+	assert.equal(destinationState, undefined);
+	assert.match(replacementMessage, /Implement the plan in a fresh context/);
+	assert.match(replacementMessage, /Fresh implementation plan/);
 });
 
 test("fresh menu work stops after source session shutdown while waiting for idle", async () => {
@@ -329,8 +335,8 @@ test("fresh menu work stops after source session shutdown while waiting for idle
 	assert.equal(persisted.latestPlan, PLAN);
 });
 
-test("fresh destination adopts setup state before the first kickoff context for every retention", async () => {
-	for (const retention of ["keep", "clear-on-start", "clear-after-first-run"] as const) {
+test("fresh destination adopts setup state before kickoff for guaranteed-plan policies", async () => {
+	for (const retention of ["keep", "clear-after-first-run"] as const) {
 		const entries: Array<{ type: "custom"; customType: string; data: unknown }> = [];
 		const mock = createMockPi({ activeTools: ["read", "edit"] });
 		planMode(mock.pi, MISSING_SETTINGS);
@@ -370,17 +376,55 @@ test("fresh destination adopts setup state before the first kickoff context for 
 			context.ctx,
 		)) as { messages: unknown[] };
 		assert.match(JSON.stringify(firstContext.messages), /Fresh implementation plan/);
-		if (retention === "clear-on-start") {
-			assert.equal(context.statuses.get("plan-mode"), undefined);
-		} else {
-			assert.equal(context.statuses.get("plan-mode"), "plan implementing");
-		}
+		assert.equal(context.statuses.get("plan-mode"), "plan implementing");
 		await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
 		assert.equal(
 			context.statuses.get("plan-mode"),
 			retention === "keep" ? "plan implementing" : undefined,
 		);
 	}
+});
+
+test("conversation-history fresh kickoff skips active state and recovers in the editor", async () => {
+	let setupCalls = 0;
+	const replacement = createMockContext({ mode: "rpc", hasUI: true });
+	const source = createMockContext({
+		mode: "rpc",
+		hasUI: true,
+		model: { provider: "test-provider", id: "test-model" },
+		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true as const }) },
+		sessionManager: { getSessionFile: () => "/sessions/planning.jsonl" },
+		newSession: async (options: {
+			setup?: () => Promise<void>;
+			withSession?: (ctx: unknown) => Promise<void>;
+		}) => {
+			if (options.setup) {
+				setupCalls += 1;
+				await options.setup();
+			}
+			await options.withSession?.({
+				...(replacement.ctx as object),
+				async sendUserMessage() {
+					throw new Error("kickoff failed");
+				},
+			});
+			return { cancelled: false };
+		},
+	});
+
+	const result = await startFreshImplementationSession(source.ctx, {
+		plan: PLAN,
+		source: "plan_mode_complete",
+		retention: "clear-on-start",
+		stateEntryType: STATE_ENTRY_TYPE,
+		isCurrent: () => true,
+	});
+
+	assert.equal(result.kind, "partial");
+	assert.equal(setupCalls, 0);
+	assert.equal(replacement.editorText, formatTransferredPlanPrompt(PLAN, true));
+	assert.match(replacement.notifications.at(-1)?.message ?? "", /request is in the editor/i);
+	assert.doesNotMatch(replacement.notifications.at(-1)?.message ?? "", /active plan/i);
 });
 
 test("fresh replacement reports recoverable setup and kickoff failures as partial", async () => {

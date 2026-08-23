@@ -6,7 +6,7 @@ import {
 	createMockPi,
 } from "../../../test/support.js";
 import { PLAN_MODE_MAX_CHARS } from "../src/completion-tool.js";
-import planMode from "../src/plan-mode.js";
+import planModeExtension from "../src/plan-mode.js";
 import { type ActiveImplementationPlan, restorePlanModeState } from "../src/state.js";
 
 const PLAN = `# Compaction-safe implementation
@@ -16,6 +16,22 @@ Marker: PLAN-PERSIST-TEST-42
 1. Preserve the exact approved plan.
 2. Verify it after compaction.`;
 const STATE_ENTRY_TYPE = "plan-mode-state";
+const KEEP_SETTINGS = {
+	readSettings: async () => ({
+		kind: "loaded" as const,
+		settings: {
+			thinkingLevel: "inherit" as const,
+			implementationPlanRetention: "keep" as const,
+		},
+	}),
+};
+
+function planMode(
+	pi: Parameters<typeof planModeExtension>[0],
+	options?: Parameters<typeof planModeExtension>[1],
+) {
+	return planModeExtension(pi, options ?? KEEP_SETTINGS);
+}
 
 function stateEntry(data: Record<string, unknown>) {
 	return { type: "custom", customType: STATE_ENTRY_TYPE, data };
@@ -185,6 +201,7 @@ test("issue 471: an active implementation plan is restored after compaction remo
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
@@ -226,6 +243,7 @@ test("implementation transition persists active state before a busy follow-up an
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext({ isIdle: () => false });
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
@@ -296,6 +314,7 @@ test("a failed superseding prompt restores the exact active implementation", asy
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
@@ -322,6 +341,7 @@ test("active context avoids exact handoff duplication and replaces stale injecte
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
@@ -397,6 +417,7 @@ test("active plans can be shown and cleared through existing direct routes", asy
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
@@ -553,6 +574,7 @@ test("the active-plan menu shows without superseding and cancellation is read-on
 			select: async (_title: string, options: string[]) =>
 				selection ? options.find((option) => option.startsWith(selection)) : undefined,
 		});
+		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 		await mock.commands.get("plan")?.handler("start", context.ctx);
 		const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 			?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
@@ -589,6 +611,7 @@ test("active-plan menu actions work in TUI and RPC without hidden route changes"
 				return options.find((option) => option.startsWith(scenario.selection));
 			},
 		});
+		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 		await mock.commands.get("plan")?.handler("start", context.ctx);
 		const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 			?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
@@ -606,6 +629,7 @@ test("/plan start supersedes an active implementation without starting a model t
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;
@@ -625,6 +649,7 @@ test("starting a new Plan-mode workflow supersedes the active implementation", a
 	const mock = createMockPi({ activeTools: ["read", "edit"] });
 	planMode(mock.pi);
 	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")
 		?.execute as ((...args: unknown[]) => Promise<unknown>) | undefined;

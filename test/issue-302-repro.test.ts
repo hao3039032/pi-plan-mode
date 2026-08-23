@@ -3,7 +3,7 @@ import { test } from "vitest";
 import { createMockContext, createMockPi } from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
 
-test("issue 302: re-entered Plan Mode hides the previous implementation handoff", async () => {
+test("issue 302: history-only implementation stays ordinary context when Plan Mode restarts", async () => {
 	const mock = createMockPi({ activeTools: ["read", "bash", "custom"] });
 	planMode(mock.pi);
 	const context = createMockContext();
@@ -22,9 +22,8 @@ test("issue 302: re-entered Plan Mode hides the previous implementation handoff"
 
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
 	const implementationHandoff = mock.sentUserMessages.at(-1)?.text ?? "";
-	assert.match(implementationHandoff, /Plan mode is now disabled/);
-	assert.match(implementationHandoff, /Implement this proposed plan now/);
-	assert.equal(context.statuses.get("plan-mode"), "plan implementing");
+	assert.equal(implementationHandoff, "Implement the plan.");
+	assert.equal(context.statuses.get("plan-mode"), undefined);
 
 	const contextHook = mock.events.get("context")?.[0];
 	assert.ok(contextHook);
@@ -61,13 +60,6 @@ test("issue 302: re-entered Plan Mode hides the previous implementation handoff"
 		messages: unknown[];
 	};
 
-	assert.deepEqual(activeContext.messages, [
-		implementationMessages[0],
-		implementationMessages[2],
-		activeMessages[3],
-	]);
-	assert.doesNotMatch(
-		JSON.stringify(activeContext.messages),
-		/Plan mode is now disabled\. Full tool access is restored/,
-	);
+	assert.deepEqual(activeContext.messages, activeMessages);
+	assert.match(JSON.stringify(activeContext.messages), /Implement the plan\./);
 });

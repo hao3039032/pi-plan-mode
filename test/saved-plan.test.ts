@@ -165,7 +165,7 @@ test("automatic and manual ready menus expose Save for later", async () => {
 		const context = createMockContext({
 			hasUI: true,
 			select: async (title: string, options: string[]) => {
-				assert.match(title, /After Implement: Keep plan active until \/plan exit/i);
+				assert.match(title, /Plan availability: Use conversation history only/i);
 				assert.deepEqual(
 					options.filter((option) => option !== "Close"),
 					automatic
@@ -203,7 +203,7 @@ test("automatic and manual ready menus expose Save for later", async () => {
 test("saved Plan management can show, implement, clear, or cancel", async () => {
 	for (const scenario of [
 		{ mode: "tui", selection: "Show saved plan", expected: "saved" },
-		{ mode: "rpc", selection: "Implement here", expected: "implementing" },
+		{ mode: "rpc", selection: "Implement here", expected: "history" },
 		{ mode: "tui", selection: "Clear saved plan", expected: "cleared" },
 		{ mode: "tui", selection: undefined, expected: "saved" },
 	] as const) {
@@ -223,7 +223,7 @@ test("saved Plan management can show, implement, clear, or cancel", async () => 
 				getEntries: () => [savedEntry],
 			},
 			select: async (title: string, options: string[]) => {
-				assert.match(title, /After Implement: Keep plan active until \/plan exit/i);
+				assert.match(title, /Plan availability: Use conversation history only/i);
 				assert.deepEqual(
 					options.filter((option) => option !== "Close"),
 					[
@@ -254,11 +254,11 @@ test("saved Plan management can show, implement, clear, or cancel", async () => 
 			}
 			await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
 			assert.equal(latestState(mock.entries)?.savedPlan?.plan, PLAN);
-		} else if (scenario.expected === "implementing") {
-			assert.equal(context.statuses.get("plan-mode"), "plan implementing");
+		} else if (scenario.expected === "history") {
+			assert.equal(context.statuses.get("plan-mode"), undefined);
 			assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /Saved implementation plan/);
 			assert.equal(latestState(mock.entries)?.savedPlan, undefined);
-			assert.equal(latestState(mock.entries)?.activeImplementation?.plan, PLAN);
+			assert.equal(latestState(mock.entries)?.activeImplementation, undefined);
 		} else {
 			assert.equal(context.statuses.get("plan-mode"), undefined);
 			assert.equal(latestState(mock.entries)?.savedPlan, undefined);
@@ -334,10 +334,11 @@ test("saved Plan direct routes show, implement, roll back failures, and clear", 
 		mock.sentUserMessages.push({ text, options });
 	};
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
-	assert.equal(context.statuses.get("plan-mode"), "plan implementing");
+	assert.equal(context.statuses.get("plan-mode"), undefined);
 	assert.deepEqual(mock.sentUserMessages.at(-1)?.options, { deliverAs: "followUp" });
+	assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /Saved implementation plan/);
 	assert.equal(latestState(mock.entries)?.savedPlan, undefined);
-	assert.equal(latestState(mock.entries)?.activeImplementation?.plan, PLAN);
+	assert.equal(latestState(mock.entries)?.activeImplementation, undefined);
 
 	const clearMock = createMockPi({ activeTools: ["read"] });
 	planMode(clearMock.pi);

@@ -26,9 +26,9 @@ export const PLAN_MODE_THINKING_LEVELS = [
 	"max",
 ] as const;
 export const IMPLEMENTATION_PLAN_RETENTIONS = [
-	"keep",
 	"clear-on-start",
 	"clear-after-first-run",
+	"keep",
 ] as const;
 export const DEFAULT_PLAN_EXPORT_PATH = "PLAN.md";
 const MODIFIERS = new Set(["ctrl", "shift", "alt", "super"]);
@@ -485,7 +485,7 @@ export function configuredThinkingLevel(
 export function configuredImplementationPlanRetention(
 	settings: PlanModeSettings,
 ): ImplementationPlanRetention {
-	return settings.implementationPlanRetention ?? "keep";
+	return settings.implementationPlanRetention ?? "clear-on-start";
 }
 
 export function configuredPlanExportPath(settings: PlanModeSettings) {
