@@ -1,5 +1,19 @@
 # @narumitw/pi-plan-mode
 
+## 0.53.0
+
+### Minor Changes
+
+- c194597: Make conversation-history-only implementation the default, use Codex-style kickoff prompts without active-plan injection, and clarify Plan reinjection controls.
+- e74ee84: Add configurable Plan helper visibility and default to revealing the helper tools on the first successful Plan activation.
+- 67eb77b: Remove the `--plan` startup flag. Start Plan mode after launch with `/plan start` or begin with a prompt through `/plan <prompt>`.
+- da265a0: Keep Plan and Normal requests on one append-only conversation with stable tool schemas, versioned mode contracts, and a runtime Plan tool allowlist that no longer activates inactive tools.
+
+### Patch Changes
+
+- df584db: Keep unused resumed sessions free of mode contracts and reject `/tree` navigation to internal transition markers.
+- 5be9aa2: Prevent active agent runs from mixing Plan and Normal tool contracts, and retry explicit structured finalization once after settlement when the model responds with prose only.
+
 ## 0.52.0
 
 ### Minor Changes
