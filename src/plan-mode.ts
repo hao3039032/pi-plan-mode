@@ -14,11 +14,7 @@ import {
 	planModeCompleted,
 	renderPlanModeCompletion,
 } from "./completion-tool.js";
-import {
-	isStaleExtensionContextError,
-	onAgentSettled,
-	setPlanThinkingLevel,
-} from "./extension-runtime.js";
+import { isStaleExtensionContextError } from "./extension-runtime.js";
 import {
 	createFinalizationRequestCoordinator,
 	FINALIZE_PLAN_PROMPT,
@@ -671,7 +667,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		acceptCompletedPlan(parsedPlan.plan, "legacy_proposed_plan", ctx);
 	});
 
-	onAgentSettled(pi, async (_event, ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		const settledImplementationId = implementationRetention.implementationSettled(
 			state.activeImplementation,
 		);
@@ -1279,7 +1275,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	function applyPlanThinkingLevel() {
 		if (state.manualThinkingLevel) {
 			if (pi.getThinkingLevel() !== state.manualThinkingLevel) {
-				setPlanThinkingLevel(pi, state.manualThinkingLevel);
+				pi.setThinkingLevel(state.manualThinkingLevel);
 			}
 			return;
 		}
@@ -1294,7 +1290,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		}
 		const current = pi.getThinkingLevel();
 		if (!state.appliedThinkingLevel) state.previousThinkingLevel = current;
-		if (current !== configured) setPlanThinkingLevel(pi, configured);
+		if (current !== configured) pi.setThinkingLevel(configured);
 		state.appliedThinkingLevel = pi.getThinkingLevel();
 	}
 
@@ -1318,7 +1314,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			previousThinkingLevel &&
 			pi.getThinkingLevel() === appliedThinkingLevel
 		) {
-			setPlanThinkingLevel(pi, previousThinkingLevel);
+			pi.setThinkingLevel(previousThinkingLevel);
 		}
 		state = { ...state, appliedThinkingLevel: undefined, previousThinkingLevel: undefined };
 	}
@@ -1468,6 +1464,6 @@ export {
 } from "./mode-contract.js";
 export { buildPlanModePrompt } from "./prompt.js";
 export { normalizePlanModeQuestionParams } from "./question-tool.js";
-export { withoutPlanModeQuestionTool, withRequiredPlanModeTools } from "./required-tools.js";
+export { withRequiredPlanModeTools } from "./required-tools.js";
 export { normalizePlanModeSettings, readPlanModeSettings } from "./settings.js";
 export { canSelectToolInPlanMode, classifyPlanModeTool, isSafeCommand } from "./tool-policy.js";

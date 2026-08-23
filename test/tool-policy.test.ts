@@ -10,7 +10,6 @@ import planMode, {
 	canSelectToolInPlanMode,
 	classifyPlanModeTool,
 	isSafeCommand,
-	withoutPlanModeQuestionTool,
 	withRequiredPlanModeTools,
 } from "../src/plan-mode.js";
 import { findBlockedCommandSegment } from "../src/tool-policy.js";
@@ -26,7 +25,6 @@ test("tool selection allows safe built-ins and non-built-ins only", () => {
 		"plan_mode_question",
 		"plan_mode_complete",
 	]);
-	assert.deepEqual(withoutPlanModeQuestionTool(["read", "plan_mode_question"]), ["read"]);
 });
 
 test("isSafeCommand permits read-only command lists and rejects shell mutation", () => {

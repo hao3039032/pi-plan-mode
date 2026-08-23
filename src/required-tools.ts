@@ -10,10 +10,6 @@ export function withRequiredPlanModeTools(toolNames: string[]) {
 	]);
 }
 
-export function withoutPlanModeQuestionTool(toolNames: string[]) {
-	return toolNames.filter((toolName) => toolName !== PLAN_MODE_QUESTION_TOOL_NAME);
-}
-
 export function withoutRequiredPlanModeTools(toolNames: string[]) {
 	return toolNames.filter(
 		(toolName) =>
