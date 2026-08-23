@@ -15,18 +15,17 @@ import type { ActiveImplementationPlan, PlanModeState } from "./state.js";
 
 export function retentionLabel(retention: ImplementationPlanRetention) {
 	return {
-		"clear-on-start": "Conversation history only",
-		"clear-after-first-run": "First implementation run",
+		"clear-on-start": "Off — conversation history only",
+		"clear-after-first-run": "Through first implementation run",
 		keep: "Until manually cleared",
 	}[retention];
 }
 
 export function implementationRetentionPreview(retention: ImplementationPlanRetention) {
 	return {
-		"clear-on-start": "Plan availability: Use conversation history only.",
-		"clear-after-first-run":
-			"Plan availability: Guarantee the exact plan through the first implementation run.",
-		keep: "Plan availability: Guarantee the exact plan until /plan exit.",
+		"clear-on-start": "Plan reinjection: Off; use conversation history only.",
+		"clear-after-first-run": "Plan reinjection: Through the first implementation run.",
+		keep: "Plan reinjection: Until /plan exit.",
 	}[retention];
 }
 

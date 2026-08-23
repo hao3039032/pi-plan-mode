@@ -165,7 +165,7 @@ test("automatic and manual ready menus expose Save for later", async () => {
 		const context = createMockContext({
 			hasUI: true,
 			select: async (title: string, options: string[]) => {
-				assert.match(title, /Plan availability: Use conversation history only/i);
+				assert.match(title, /Plan reinjection: Off; use conversation history only/i);
 				assert.deepEqual(
 					options.filter((option) => option !== "Close"),
 					automatic
@@ -223,7 +223,7 @@ test("saved Plan management can show, implement, clear, or cancel", async () => 
 				getEntries: () => [savedEntry],
 			},
 			select: async (title: string, options: string[]) => {
-				assert.match(title, /Plan availability: Use conversation history only/i);
+				assert.match(title, /Plan reinjection: Off; use conversation history only/i);
 				assert.deepEqual(
 					options.filter((option) => option !== "Close"),
 					[

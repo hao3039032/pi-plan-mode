@@ -94,8 +94,7 @@ test("ready choice descriptions stay bounded and cancellation has no side effect
 		await showReadyPlanMenu(context.ctx, {
 			signal: owner.signal,
 			isCurrent: () => !owner.signal.aborted,
-			implementationOutcome: () =>
-				"Plan availability: Guarantee the exact plan until /plan exit\u001b]8;;unsafe\u0007.",
+			implementationOutcome: () => "Plan reinjection: Until /plan exit\u001b]8;;unsafe\u0007.",
 			getExportDestination: () => ({ configuredPath: "PLAN.md", resolvedPath: "/tmp/PLAN.md" }),
 			implementHere: () => {
 				actionCalls += 1;

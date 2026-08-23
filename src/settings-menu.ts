@@ -113,9 +113,9 @@ export async function showPlanModeSettings(
 								},
 								{
 									id: "implementationPlanRetention",
-									label: "Plan availability",
+									label: "Plan reinjection",
 									description:
-										"Choose whether implementation relies on conversation history or guaranteed plan context.",
+										"Choose how long Plan mode restores the exact plan when ordinary context no longer contains it.",
 									currentValue: retentionLabel(
 										configuredImplementationPlanRetention(state.settings),
 									),
@@ -210,7 +210,7 @@ export async function showPlanModeSettings(
 					actionCtx,
 					{ implementationPlanRetention },
 					signal,
-					`Plan availability: ${retentionLabel(implementationPlanRetention)}. Applies to the next Implement action.`,
+					`Plan reinjection: ${retentionLabel(implementationPlanRetention)}. Applies to the next Implement action.`,
 				);
 			},
 			"open-export": async () => ({ kind: "to", screen: "export" }),
@@ -311,7 +311,7 @@ export async function showPlanModeSettings(
 function settingsLines(settingsPath: string, notice: string | undefined) {
 	return [
 		`User settings · ${safeTerminalText(settingsPath)}`,
-		"Plan defaults apply to the next workflow; plan availability and export choices apply to their next action.",
+		"Plan defaults apply to the next workflow; reinjection and export choices apply to their next action.",
 		...(notice ? [safeTerminalText(notice)] : []),
 	];
 }

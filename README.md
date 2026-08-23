@@ -14,7 +14,7 @@ This independently installable extension adds a Codex-like `/plan` collaboration
 - Reviews the complete plan before implementation, export, save, continued planning, or discard.
 - Starts implementation in the planning session or a fresh linked session with the exact approved plan.
 - Persists Plan state and one saved plan across resume and compaction.
-- Exposes statusline state and configurable tool visibility, export destination, plan availability, shortcut, and thinking level.
+- Exposes statusline state and configurable tool visibility, export destination, plan reinjection, shortcut, and thinking level.
 - Cooperates anonymously with Workflow Mutex Protocol v1 participants so only one agent workflow starts in a session.
 
 ## 📦 Install
@@ -156,7 +156,7 @@ That compatibility path remains accepted, but it is not the primary workflow.
 Empty, malformed, unclosed, or multiple legacy blocks keep Plan mode active and produce a warning.
 
 After completion, `/plan` opens the ready actions when interactive UI is available.
-The same flat menu shows **Implement here** and **Start fresh and implement**, explains which conversation context each choice uses, and previews the selected **Plan availability** policy.
+The same flat menu shows **Implement here** and **Start fresh and implement**, explains which conversation context each choice uses, and previews the selected **Plan reinjection** policy.
 **Implement here**—and the compatibility route `/plan implement`—disables Plan mode, restores full tool access, captures the current policy, and starts implementation in the current session with its planning conversation.
 **Start fresh and implement** waits for the source session to become idle, verifies the selected model and authentication, creates a new session linked to the persisted source as its parent, and transfers the exact approved plan without copying planning messages, tool results, or compaction/branch summaries.
 The destination still loads its normal `AGENTS.md`, skills, project resources, and extensions.
@@ -168,7 +168,7 @@ A successful fresh handoff does not delete or consume the source planning sessio
 Resume it later to inspect or hand off the ready/saved plan again; this deliberate duplication is the recovery path if the destination work is abandoned.
 In-memory sessions create an unlinked fresh session because no parent file exists.
 Escape, Ctrl+C, menu disposal, source replacement/shutdown, model/auth failure, or cancellation by another extension before replacement leaves the source plan unchanged.
-Under **Conversation history only**, the destination receives the complete plan in its initial user prompt and does not persist active-plan state.
+Under **Off — conversation history only**, the destination receives the complete plan in its initial user prompt and does not persist active-plan state.
 If that kickoff fails, the complete request remains in the destination editor and the source remains resumable.
 Under either guaranteed-plan policy, the destination persists active-plan state before kickoff.
 If guaranteed-plan persistence fails, the complete request is placed in the destination editor and the source remains resumable.
@@ -189,12 +189,12 @@ Successful export is observable through the created file; exporting a ready plan
 An existing target or missing plan fails the command without changing state.
 These modes reject saved-plan display and implementation before changing state because Pi provides neither printable custom-message output nor acknowledged extension-triggered turns; resume the session in TUI or RPC to show or implement it.
 
-Both implementation paths apply the current **Plan availability** policy in their destination.
-The default **Conversation history only** policy does not create active-plan state or inject a hidden plan context.
+Both implementation paths apply the current **Plan reinjection** policy in their destination.
+The default **Off — conversation history only** policy does not create active-plan state or inject a hidden plan context.
 Implement here sends `Implement the plan.` and leaves the accepted plan in ordinary planning history.
 Start fresh and implement, or implementing a saved plan here, puts the complete plan in one ordinary initial user prompt because no reliable planning conversation is present.
 Later model calls then rely on Pi's normal conversation history and compaction behavior.
-**First implementation run** guarantees the exact plan throughout the first implementation run, including retries, compaction retries, and queued continuation, then clears active-plan state at `agent_settled`.
+**Through first implementation run** guarantees the exact plan throughout that run, including retries, compaction retries, and queued continuation, then clears active-plan state at `agent_settled`.
 **Until manually cleared** guarantees the exact plan across later turns, resume, and manual or automatic compaction until `/plan exit` or supersession.
 The guaranteed policies avoid a duplicate context block while the original implementation handoff remains available and inject one hidden canonical copy after that handoff is compacted away.
 Reinjection can consume up to the existing 50,000-character plan limit in model context.
@@ -206,7 +206,7 @@ Settings changes never alter the policy already captured by an active guaranteed
 Automatic first-run cleanup removes the active status and future injected context after the triggering implementation run has received the complete plan.
 Starting a new Plan-mode workflow or implementing a replacement plan supersedes an active guaranteed plan.
 The extension deliberately does not infer completion from assistant prose or agent settlement under **Until manually cleared**, so clear the active plan when it no longer applies.
-Under **Conversation history only**, implementation messages remain ordinary conversation history and there is no active plan for `/plan exit` to remove.
+Under **Off — conversation history only**, implementation messages remain ordinary conversation history and there is no active plan for `/plan exit` to remove.
 Choosing Stay before implementation keeps the plan ready.
 Revision feedback starts another Plan-mode turn and clears the previous implementable plan until an updated completion arrives.
 For clarification-only follow-ups, the agent answers and resubmits the complete unchanged plan so it remains implementable.
@@ -218,7 +218,7 @@ With `@narumitw/pi-statusline`, this appears in the extension status area:
 - `plan active`: Plan mode is enabled and still gathering context or drafting a plan.
 - `plan ready`: A completed plan is stored until you implement it, export it, save it, continue planning, or exit Plan mode.
 - `plan saved`: One completed plan is stored outside model context in the current session until you implement or clear it.
-- `plan implementing`: The exact accepted plan is guaranteed under **First implementation run** or **Until manually cleared**.
+- `plan implementing`: The exact accepted plan is guaranteed under **Through first implementation run** or **Until manually cleared**.
 
 You can also exit directly.
 Before implementation, direct exit discards the latest proposed plan; while a plan is saved, it clears that saved plan.
@@ -264,7 +264,7 @@ Guaranteed coexistence with Goal requires `@narumitw/pi-goal` `0.53.0` or newer 
 
 ## ⚙️ Settings
 
-Open **Settings** from an inactive `/plan` menu to edit one flat group of five workflow choices: **Plan thinking**, **Plan tools**, **Plan availability**, **Export destination**, and **Plan mode shortcut**.
+Open **Settings** from an inactive `/plan` menu to edit one flat group of five workflow choices: **Plan thinking**, **Plan tools**, **Plan reinjection**, **Export destination**, and **Plan mode shortcut**.
 You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually.
 `safeSubcommands` remains JSON-only.
 You can change the Plan-mode shortcut with `toggleShortcut` as long as the file remains JSON-only and uses a valid key string.
@@ -303,13 +303,13 @@ A selection accepted through **Choose tools, then start…** or `/plan tools` is
 The global setting remains the baseline for fresh sessions and sessions without an explicit selection.
 Settings saves immediately, but the saved tools and thinking level apply only when a later Plan workflow starts; they never mutate a workflow already in progress.
 
-### Plan availability
+### Plan reinjection
 
-The stable JSON field `implementationPlanRetention` controls how the next Implement action supplies the approved plan to model context.
-Omit it or use `clear-on-start` for **Conversation history only**, the default Codex-like behavior with no active-plan state or hidden context injection.
+The stable JSON field `implementationPlanRetention` controls whether and how long the `context` hook restores the exact approved plan when ordinary model context no longer contains it.
+Omit it or use `clear-on-start` for **Off — conversation history only**, the default Codex-like behavior with no active-plan state or hidden context injection.
 In the planning session, this policy sends `Implement the plan.` and relies on the accepted plan already present in ordinary conversation history.
 A fresh session or saved-plan implementation instead places the complete plan in one ordinary kickoff prompt because its planning history is unavailable or intentionally excluded.
-Use `clear-after-first-run` for **First implementation run** to guarantee the exact plan until that implementation's first fully settled run ends.
+Use `clear-after-first-run` for **Through first implementation run** to guarantee the exact plan until that implementation's first fully settled run ends.
 Use `keep` for **Until manually cleared** to guarantee and reinject the exact plan until `/plan exit` or supersession.
 A resumed guaranteed-plan cleanup policy re-arms against the first context in the replacement session.
 Failed handoff delivery restores the ready or saved plan and does not run automatic cleanup.

@@ -242,9 +242,9 @@ test("an armed older implementation cannot clear a superseding implementation", 
 
 test("Implement menus preview each configured retention outcome before confirmation", async () => {
 	for (const [retention, preview] of [
-		["clear-on-start", "Use conversation history only"],
-		["clear-after-first-run", "Guarantee the exact plan through the first implementation run"],
-		["keep", "Guarantee the exact plan until /plan exit"],
+		["clear-on-start", "Off; use conversation history only"],
+		["clear-after-first-run", "Through the first implementation run"],
+		["keep", "Until /plan exit"],
 	] as const) {
 		let menuTitle = "";
 		const mock = createMockPi({ activeTools: ["read"] });
@@ -303,7 +303,7 @@ test("changing Settings does not retroactively change an active implementation",
 				}
 				if (changedSetting) return undefined;
 				changedSetting = true;
-				return options.find((option) => option.startsWith("Plan availability"));
+				return options.find((option) => option.startsWith("Plan reinjection"));
 			},
 		});
 		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
