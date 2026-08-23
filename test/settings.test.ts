@@ -17,6 +17,7 @@ import {
 	configuredImplementationPlanRetention,
 	configuredPlanExportPath,
 	configuredPlanModeToggleShortcut,
+	configuredPlanModeToolVisibility,
 	normalizePlanModeSettings,
 	readPlanModeSettings,
 	updatePlanModeSettings,
@@ -39,6 +40,33 @@ test("Plan-mode settings validate inherit and fixed thinking levels", async () =
 		assert.deepEqual(await readPlanModeSettings(path), {
 			kind: "loaded",
 			settings: { thinkingLevel: "high" },
+		});
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test("Plan-mode settings default and validate helper tool visibility", async () => {
+	const defaults = normalizePlanModeSettings({});
+	assert.ok(defaults);
+	assert.equal(configuredPlanModeToolVisibility(defaults), "after-first-plan");
+	for (const toolVisibility of ["always", "after-first-plan"] as const) {
+		const normalized = normalizePlanModeSettings({ toolVisibility });
+		assert.ok(normalized);
+		assert.equal(configuredPlanModeToolVisibility(normalized), toolVisibility);
+	}
+	assert.equal(normalizePlanModeSettings({ toolVisibility: "sometimes" }), undefined);
+
+	const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-visibility-test-"));
+	try {
+		const settingsPath = join(directory, "pi-plan-mode.json");
+		await updatePlanModeSettings({ toolVisibility: "always" }, { settingsPath });
+		assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
+			toolVisibility: "always",
+		});
+		assert.deepEqual(await readPlanModeSettings(settingsPath), {
+			kind: "loaded",
+			settings: { thinkingLevel: "inherit", toolVisibility: "always" },
 		});
 	} finally {
 		await rm(directory, { recursive: true, force: true });

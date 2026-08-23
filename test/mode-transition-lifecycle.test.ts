@@ -100,7 +100,7 @@ test("manual tree navigation restores branch-owned mode state without changing t
 	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
 	const tree = mock.events.get("session_tree")?.[0];
 	assert.ok(tree);
-	assert.deepEqual(mock.rawPi.getActiveTools(), BASELINE);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "edit", "write"]);
 
 	branch.splice(
 		0,

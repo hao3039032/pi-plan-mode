@@ -30,6 +30,8 @@ export const IMPLEMENTATION_PLAN_RETENTIONS = [
 	"clear-after-first-run",
 	"keep",
 ] as const;
+export const PLAN_MODE_TOOL_VISIBILITIES = ["always", "after-first-plan"] as const;
+export const DEFAULT_PLAN_MODE_TOOL_VISIBILITY = "after-first-plan";
 export const DEFAULT_PLAN_EXPORT_PATH = "PLAN.md";
 const MODIFIERS = new Set(["ctrl", "shift", "alt", "super"]);
 const BASE_KEYS = new Set([
@@ -89,9 +91,11 @@ const MAX_PLAN_EXPORT_PATH_LENGTH = 4096;
 
 export type PlanModeThinkingLevel = (typeof PLAN_MODE_THINKING_LEVELS)[number];
 export type ImplementationPlanRetention = (typeof IMPLEMENTATION_PLAN_RETENTIONS)[number];
+export type PlanModeToolVisibility = (typeof PLAN_MODE_TOOL_VISIBILITIES)[number];
 export type PlanModeFixedThinkingLevel = Exclude<PlanModeThinkingLevel, "inherit">;
 export interface PlanModeSettings {
 	thinkingLevel: PlanModeThinkingLevel;
+	toolVisibility?: PlanModeToolVisibility;
 	defaultPlanTools?: string[];
 	implementationPlanRetention?: ImplementationPlanRetention;
 	defaultPlanExportPath?: string;
@@ -100,6 +104,7 @@ export interface PlanModeSettings {
 }
 export interface PlanModeSettingsPatch {
 	thinkingLevel?: PlanModeThinkingLevel;
+	toolVisibility?: PlanModeToolVisibility;
 	defaultPlanTools?: readonly string[] | null;
 	implementationPlanRetention?: ImplementationPlanRetention;
 	defaultPlanExportPath?: string | null;
@@ -143,6 +148,13 @@ export function normalizePlanModeSettings(value: unknown): PlanModeSettings | un
 	const settings: PlanModeSettings = {
 		thinkingLevel: thinkingLevel as PlanModeThinkingLevel,
 	};
+	if (Object.hasOwn(value, "toolVisibility")) {
+		const toolVisibility = Reflect.get(value, "toolVisibility");
+		if (!PLAN_MODE_TOOL_VISIBILITIES.includes(toolVisibility as PlanModeToolVisibility)) {
+			return undefined;
+		}
+		settings.toolVisibility = toolVisibility as PlanModeToolVisibility;
+	}
 	if (Object.hasOwn(value, "defaultPlanTools")) {
 		const defaultPlanTools = normalizeToolNames(Reflect.get(value, "defaultPlanTools"));
 		if (!defaultPlanTools) return undefined;
@@ -299,6 +311,7 @@ export function updatePlanModeSettings(
 		const current = await readSettingsDocumentForUpdate(settingsPath, legacySettingsPath);
 		const updated: SettingsDocument = { ...current };
 		if (patch.thinkingLevel !== undefined) updated.thinkingLevel = patch.thinkingLevel;
+		if (patch.toolVisibility !== undefined) updated.toolVisibility = patch.toolVisibility;
 		if (patch.defaultPlanTools === null) delete updated.defaultPlanTools;
 		else if (patch.defaultPlanTools !== undefined) {
 			updated.defaultPlanTools = [...patch.defaultPlanTools];
@@ -480,6 +493,12 @@ export function configuredThinkingLevel(
 	settings: PlanModeSettings,
 ): PlanModeFixedThinkingLevel | undefined {
 	return settings.thinkingLevel === "inherit" ? undefined : settings.thinkingLevel;
+}
+
+export function configuredPlanModeToolVisibility(
+	settings: PlanModeSettings,
+): PlanModeToolVisibility {
+	return settings.toolVisibility ?? DEFAULT_PLAN_MODE_TOOL_VISIBILITY;
 }
 
 export function configuredImplementationPlanRetention(

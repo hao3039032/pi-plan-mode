@@ -321,7 +321,12 @@ test("failed implementation delivery restores ready state without retained imple
 
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), "plan ready");
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "custom"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"custom",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 	const restored = latestState(mock.entries);
 	assert.equal(restored?.latestPlan, PLAN);
 	assert.equal(restored?.activeImplementation, undefined);

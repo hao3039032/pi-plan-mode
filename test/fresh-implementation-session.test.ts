@@ -385,12 +385,7 @@ test("fresh destination adopts setup state before kickoff for guaranteed-plan po
 			context.ctx,
 		);
 		assert.equal(context.statuses.get("plan-mode"), "plan implementing");
-		assert.deepEqual(mock.rawPi.getActiveTools(), [
-			"read",
-			"edit",
-			"plan_mode_question",
-			"plan_mode_complete",
-		]);
+		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
 
 		const firstContext = (await mock.events.get("context")?.[0]?.(
 			{ messages: [{ role: "user", content: handoff }] },

@@ -241,7 +241,7 @@ test("busy direct starts preserve state in every command mode", async () => {
 	}
 });
 
-test("busy restored activation performs only the startup envelope write", async () => {
+test("busy restored activation does not widen the startup tool envelope", async () => {
 	const entry = persistedPlanState({ enabled: true, awaitingAction: false });
 	const sessionManager = { getBranch: () => [entry], getEntries: () => [entry] };
 	const mock = createMockPi({ activeTools: ["goal_complete"], thinkingLevel: "high" });
@@ -256,12 +256,8 @@ test("busy restored activation performs only the startup envelope write", async 
 	const context = createMockContext({ mode: "tui", hasUI: true, sessionManager });
 
 	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-	assert.equal(activeToolWrites, 1);
-	assert.deepEqual(mock.rawPi.getActiveTools(), [
-		"goal_complete",
-		"plan_mode_question",
-		"plan_mode_complete",
-	]);
+	assert.equal(activeToolWrites, 0);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["goal_complete"]);
 	assert.equal(mock.thinkingLevel, "high");
 	assert.equal(mock.thinkingLevels.length, 0);
 	assert.equal(mock.entries.length, 0);
@@ -322,12 +318,7 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
 	});
 	await shortcutMock.events.get("session_start")?.[0]?.({ reason: "startup" }, shortcutContext.ctx);
 	await shortcutMock.shortcuts.get("ctrl+shift+p")?.handler(shortcutContext.ctx);
-	assert.deepEqual(shortcutMock.rawPi.getActiveTools(), [
-		"read",
-		"write",
-		"plan_mode_question",
-		"plan_mode_complete",
-	]);
+	assert.deepEqual(shortcutMock.rawPi.getActiveTools(), ["read", "write"]);
 	assert.equal(shortcutMock.entries.length, 0);
 	assert.match(shortcutContext.notifications.at(-1)?.message ?? "", /Another workflow/u);
 
@@ -365,12 +356,7 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
 	await activeMock.commands.get("plan")?.handler("", activeContext.ctx);
 	assert.ok(startNew);
 	startNew();
-	assert.deepEqual(activeMock.rawPi.getActiveTools(), [
-		"read",
-		"write",
-		"plan_mode_question",
-		"plan_mode_complete",
-	]);
+	assert.deepEqual(activeMock.rawPi.getActiveTools(), ["read", "write"]);
 	assert.equal(activeMock.entries.length, 0);
 	assert.deepEqual([...activeContext.statuses], statusSnapshot);
 });

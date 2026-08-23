@@ -46,7 +46,7 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 				kind: "multiSelect",
 				title: "Choose Plan policy allowlist",
 				lines: [
-					"Changes apply only when you start Plan mode; model-visible tools stay unchanged.",
+					"Policy changes apply only when you start Plan mode; first use may also reveal Plan helpers.",
 					"Only tools already active in Pi can be allowed; non-built-ins run at user risk.",
 				],
 				enableSearch: true,

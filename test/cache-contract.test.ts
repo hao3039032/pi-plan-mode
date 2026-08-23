@@ -8,6 +8,11 @@ interface CapturedRequest {
 	activeTools: string[];
 	systemPrompt: string;
 	messages: unknown[];
+	activePromptMetadata: Array<{
+		name: string;
+		promptSnippet: unknown;
+		promptGuidelines: unknown;
+	}>;
 	providerPayload: {
 		instructions: string;
 		tools: Array<{ name: string; description: unknown; parameters: unknown }>;
@@ -47,6 +52,14 @@ async function captureRequest(
 		activeTools,
 		systemPrompt,
 		messages: visibleMessages,
+		activePromptMetadata: activeTools.map((name) => {
+			const tool = toolByName.get(name);
+			return {
+				name,
+				promptSnippet: tool?.promptSnippet,
+				promptGuidelines: tool?.promptGuidelines,
+			};
+		}),
 		providerPayload: {
 			instructions: systemPrompt,
 			tools: orderedDefinitions,
@@ -63,7 +76,7 @@ async function completePlan(mock: ReturnType<typeof createMockPi>, ctx: unknown)
 	await complete("complete", { plan: "# Cache-stable plan" }, undefined, undefined, ctx);
 }
 
-test("cache-contract fixture keeps request fields stable while history extends across modes", async () => {
+test("always-visible cache contract keeps request fields stable across modes", async () => {
 	const allTools = [
 		builtinTool("read"),
 		builtinTool("bash"),
@@ -71,7 +84,12 @@ test("cache-contract fixture keeps request fields stable while history extends a
 		builtinTool("write"),
 	];
 	const mock = createMockPi({ activeTools: ["read", "bash", "edit", "write"], allTools });
-	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	planMode(mock.pi, {
+		readSettings: async () => ({
+			kind: "loaded" as const,
+			settings: { thinkingLevel: "inherit" as const, toolVisibility: "always" as const },
+		}),
+	});
 	const context = createMockContext();
 	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
 
@@ -102,6 +120,8 @@ test("cache-contract fixture keeps request fields stable while history extends a
 	assert.equal(implementation.systemPrompt, normal.systemPrompt);
 	assert.deepEqual(plan.providerPayload.tools, normal.providerPayload.tools);
 	assert.deepEqual(implementation.providerPayload.tools, normal.providerPayload.tools);
+	assert.deepEqual(plan.activePromptMetadata, normal.activePromptMetadata);
+	assert.deepEqual(implementation.activePromptMetadata, normal.activePromptMetadata);
 	assert.equal(plan.providerPayload.instructions, normal.providerPayload.instructions);
 	assert.equal(implementation.providerPayload.instructions, normal.providerPayload.instructions);
 	assert.match(JSON.stringify(plan.messages), /CONTRACT v1: PLAN/u);
@@ -113,4 +133,54 @@ test("cache-contract fixture keeps request fields stable while history extends a
 			.map((message) => (message as { content?: unknown }).content),
 		["A", "B", "Implement the plan."],
 	);
+});
+
+test("after-first-plan changes helper definitions once and keeps the unlocked prefix stable", async () => {
+	const allTools = [
+		builtinTool("read"),
+		builtinTool("bash"),
+		builtinTool("edit"),
+		builtinTool("write"),
+	];
+	const mock = createMockPi({ activeTools: ["read", "bash", "edit", "write"], allTools });
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+
+	const normal = await captureRequest("normal", mock, context.ctx, [
+		{ role: "user", content: "A" },
+	]);
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	const planContract = mock.sentMessages.at(-1)?.message;
+	const plan = await captureRequest("plan", mock, context.ctx, [
+		{ role: "user", content: "A" },
+		planContract,
+		{ role: "user", content: "B" },
+	]);
+	await completePlan(mock, context.ctx);
+	await mock.commands.get("plan")?.handler("implement", context.ctx);
+	const implementation = await captureRequest("implementation", mock, context.ctx, [
+		{ role: "user", content: "A" },
+		planContract,
+		{ role: "user", content: "B" },
+		mock.sentMessages.at(-1)?.message,
+		{ role: "user", content: "Implement the plan." },
+	]);
+
+	assert.deepEqual(normal.activeTools, ["read", "bash", "edit", "write"]);
+	assert.deepEqual(plan.activeTools, [
+		"read",
+		"bash",
+		"edit",
+		"write",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
+	assert.deepEqual(implementation.activeTools, plan.activeTools);
+	assert.notDeepEqual(plan.providerPayload.tools, normal.providerPayload.tools);
+	assert.deepEqual(implementation.providerPayload.tools, plan.providerPayload.tools);
+	assert.notDeepEqual(plan.activePromptMetadata, normal.activePromptMetadata);
+	assert.deepEqual(implementation.activePromptMetadata, plan.activePromptMetadata);
+	assert.equal(plan.systemPrompt, normal.systemPrompt);
+	assert.equal(implementation.systemPrompt, plan.systemPrompt);
 });

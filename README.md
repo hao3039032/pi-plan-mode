@@ -9,7 +9,7 @@ This independently installable extension adds a Codex-like `/plan` collaboration
 ## ✨ Features
 
 - Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`.
-- Keeps one stable model-visible tool envelope while a runtime Plan policy blocks mutations and unsafe shell forms.
+- Defers Plan helper schemas until first use by default, then keeps the unlocked tool envelope stable while runtime policy blocks mutations and unsafe shell forms.
 - Requires structured questions for important ambiguity and explicit completion for a decision-ready plan.
 - Reviews the complete plan before implementation, export, save, continued planning, or discard.
 - Starts implementation in the planning session or a fresh linked session with the exact approved plan.
@@ -60,11 +60,13 @@ An inactive legacy state entry alone does not inject a Normal contract, so sessi
 Manual `/tree` navigation restores branch-owned Plan state and chooses the matching effective contract without navigating automatically or adding a branch summary.
 Pi currently lists hidden custom transition messages in `/tree`; Plan mode rejects those internal targets, so select an adjacent conversation entry instead.
 
-The extension keeps its base system prompt and ordered startup tool definitions unchanged across start, off, exit, save, export, and implementation transitions.
-This makes the reusable provider prefix stable; it does not guarantee a cache hit.
-Provider serialization, cache lifetime, minimum cacheable prefix, implementation details, and session affinity still control reuse.
+The default `toolVisibility: "after-first-plan"` keeps `plan_mode_question` and `plan_mode_complete` registered but inactive until the first successful Plan activation in an extension runtime.
+That activation appends the two helpers in canonical order and may cause one provider-prefix cache miss because `/plan` is a slash-command transition rather than a model-called deferred-tool loader.
+The helpers and their active-only prompt metadata remain visible after that boundary across off, exit, save, export, implementation, and same-runtime session starts.
+Failed, cancelled, stale, or workflow-busy activation restores the exact prior active-tool list and does not consume the first-activation boundary.
+Choose `toolVisibility: "always"` to expose both helpers at session startup and preserve the previous stable-prefix behavior from the first request.
+Neither choice guarantees a cache hit because provider serialization, cache lifetime, minimum cacheable prefix, implementation details, and session affinity still control reuse.
 A user, Pi, or another extension can change the active tool set outside this extension's guarantee.
-Upgrading an older session may incur one initial miss because the two Plan helper definitions become part of the always-active startup envelope.
 
 The default `thinkingLevel: "inherit"` path also avoids a Plan-specific reasoning-parameter change.
 Choosing a fixed Plan thinking level remains supported, but switching reasoning parameters can prevent provider-side state reuse even when system instructions and tool schemas are stable.
@@ -118,7 +120,7 @@ Relative paths resolve from the command's current `ctx.cwd` at export time, abso
 Explicit `/plan export <path>` input always wins over the setting.
 Export never overwrites an existing file, directory, or symbolic link: choose another path or remove the existing target first.
 A successful export adds one trailing newline but otherwise preserves the accepted Markdown exactly.
-After a ready plan is written, Plan mode ends, its thinking level is restored, the stable tool envelope is retained, and the ready state is cleared without starting a model turn.
+After a ready plan is written, Plan mode ends, its thinking level is restored, the current helper visibility is retained, and the ready state is cleared without starting a model turn.
 Exporting a saved or active implementation plan leaves that state unchanged.
 Failed or cancelled exports leave every Plan-mode state unchanged.
 The resulting file is available to the agent through its normal file-reading tools.
@@ -137,14 +139,15 @@ The agent may inspect files and run read-only commands, but it should not edit f
 It should explore first, then use structured questions when your preference or a tradeoff materially changes the plan.
 Configure persistent defaults or a one-workflow tool override before activation; Planning and ready menus deliberately keep those controls locked.
 
-At `session_start`, Plan mode appends `plan_mode_question` and `plan_mode_complete` once, in that order, to Pi's existing active tool names.
-The resulting ordered names and definitions remain model-visible in both Normal and Plan mode.
-Plan transitions never call `setActiveTools()`.
+Plan mode registers `plan_mode_question` and `plan_mode_complete` during extension load.
+With the default **After first plan** visibility, `session_start` leaves both helpers inactive until the first admitted Plan workflow appends them in that order.
+With **Always**, `session_start` appends missing helpers in the same canonical order.
+Once revealed, ordinary Plan transitions never remove them during that extension runtime.
 By default, the Plan policy allows active safe built-ins such as `read`, limited `bash`, `grep`, `find`, and `ls`.
 Built-in `edit` and `write`, `update_plan`, inactive tools, and deselected tools are blocked at execution time even though active schemas remain visible.
 Extension and custom tools are denied by default because Pi tools do not expose standardized mutability metadata; allow an already active custom tool before starting only when you accept the risk.
 For example, you can opt into an active `firecrawl_scrape`, `firecrawl_search`, or `lsp_diagnostics` tool when you want to use it during planning.
-The Plan-only helpers remain visible in Normal mode, but their handlers and the `tool_call` policy reject calls unless Plan mode owns the active workflow.
+After they become visible, the Plan-only helpers remain visible in Normal mode, but their handlers and the `tool_call` policy reject calls unless Plan mode owns the active workflow.
 
 Limited `bash` uses a fail-closed policy, including when an extension overrides the canonical `bash` tool name.
 It accepts common inspection commands, read-only Git and npm queries, pipelines and command lists composed entirely of accepted commands, plus selected checks such as `npm test`, `npm run typecheck`, and `cargo test`.
@@ -273,11 +276,11 @@ Saved plans and ordinary implementation after Plan handoff do not hold the group
 Every inactive start performs one final synchronous admission after asynchronous preflight and before changing Plan state, persistence, prompts, tools, thinking level, queues, or status.
 If another participant is active, TUI and RPC show an anonymous warning that another workflow is active.
 Print and JSON direct routes throw the same anonymous error before mutation.
-Launch-menu, selected-tool, shortcut, startup-flag, active-implementation **Start a new plan**, and restored activation use the same admission boundary.
+Launch-menu, selected-tool, shortcut, active-implementation **Start a new plan**, and restored activation use the same admission boundary.
 A rejected selected-tool launch does not save its draft choices.
 
 Restored active Plan state acquires before restoring restrictive tools, thinking, status, or model hooks.
-If restoration is busy, Plan mode stays non-running, leaves persisted history untouched, performs no tool change beyond the session-start helper envelope, and requires a later reload or explicit new start after the other workflow ends.
+If restoration is busy, Plan mode stays non-running, leaves persisted history and active tools untouched, and requires a later reload or explicit new start after the other workflow ends.
 Planning-session cancellation during a fresh implementation preflight keeps the source Plan and its ownership.
 Successful session replacement relies on source-session shutdown to clean up and release; the destination's ordinary active implementation does not acquire the Plan mutex.
 
@@ -299,7 +302,7 @@ Guaranteed coexistence with Goal requires `@narumitw/pi-goal` `0.53.0` or newer 
 
 ## ⚙️ Settings
 
-Open **Settings** from an inactive `/plan` menu to edit one flat group of five workflow choices: **Plan thinking**, **Plan policy tools**, **Plan reinjection**, **Export destination**, and **Plan mode shortcut**.
+Open **Settings** from an inactive `/plan` menu to edit one flat group of six workflow choices: **Plan thinking**, **Plan policy tools**, **Plan reinjection**, **Export destination**, **Plan mode shortcut**, and **Plan tools**.
 You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually.
 `safeSubcommands` remains JSON-only.
 You can change the Plan-mode shortcut with `toggleShortcut` as long as the file remains JSON-only and uses a valid key string.
@@ -308,6 +311,7 @@ When omitted, the shortcut is disabled by default.
 ```json
 {
   "thinkingLevel": "inherit",
+  "toolVisibility": "after-first-plan",
   "defaultPlanTools": ["read", "bash", "grep", "find", "ls"],
   "implementationPlanRetention": "clear-on-start",
   "defaultPlanExportPath": "PLAN.md",
@@ -319,6 +323,18 @@ When omitted, the shortcut is disabled by default.
 }
 ```
 
+### Plan helper visibility
+
+`toolVisibility` accepts `"after-first-plan"` or `"always"`.
+Omit it—or choose **After first plan**—to keep both Plan helpers out of model requests until the first successful Plan activation in that extension runtime.
+A successful activation keeps the helpers visible for the rest of that runtime; changing the setting back to **After first plan** while inactive resets and hides them at an idle, mutex-admitted boundary.
+Choose **Always** to make the helpers model-visible at session startup and avoid the lazy first-use prefix change.
+Settings-menu changes apply and persist immediately only after idle and Workflow Mutex admission; failure restores the prior runtime and displayed value.
+Manual file changes reload automatically and apply visibility when the session is inactive, idle, and mutex-admitted.
+An unsafe manual reload keeps the current tool envelope until the next session start or successful Plan activation.
+A restored active Plan reveals its helpers only after acquiring workflow ownership, while a busy restore leaves active tools untouched.
+This setting uses ordinary active-tool activation and does not claim Pi native deferred loading.
+
 ### Default Plan policy tools
 
 `defaultPlanTools` defines the initial runtime allowlist when a session has no stored pre-start selection.
@@ -329,7 +345,7 @@ Neither setting changes model-visible tool schemas.
 Tool names must be non-empty strings; duplicates are removed in first-seen order.
 Unknown, inactive, and Plan-mode-blocked names are unavailable to the policy and never become active merely by entering Plan mode.
 Settings retains configured inactive names and shows them as unavailable; resetting to automatic removes the entire override.
-A tool registered or activated after the startup baseline is outside the current workflow policy; start a later session to include it in this extension's stable envelope guarantee.
+An ordinary tool registered or activated after the startup baseline is outside the current workflow policy; start a later session to include it in the selectable baseline.
 Non-built-in names in this global setting are an explicit user-risk opt-in, just like selecting them in the pre-start workflow selector.
 Plan mode does not interpret a selected custom tool's arguments or actions: allowing one trusts the whole effective tool.
 Pi resolves tools by name, so if an extension overrides a built-in name, the effective extension tool is selected instead.
@@ -440,7 +456,7 @@ A missing file stays absent until an explicit save.
 Invalid JSON, invalid values, oversized content, non-regular files, and read failures make Settings read-only; the existing bytes and previous effective settings remain.
 This in-process queue is not a cross-process lock, so concurrent separate Pi processes can still race.
 
-Invalid settings produce a warning and fall back to inherited thinking, available safe-built-in tool defaults, `clear-on-start`, and `PLAN.md`.
+Invalid settings produce a warning and fall back to inherited thinking, `after-first-plan` helper visibility, available safe-built-in tool defaults, `clear-on-start`, and `PLAN.md`.
 Compatibility: a valid legacy `plan-mode.json` remains readable with a warning and is never modified automatically.
 If Settings is explicitly saved while only that legacy file exists, the extension creates canonical `pi-plan-mode.json` from the complete legacy document, applies the selected change, preserves unknown fields, and leaves the legacy file untouched.
 If both files exist, the canonical filename takes precedence.
@@ -454,10 +470,10 @@ This extension maps Codex's `ModeKind::Plan` behavior onto Pi's extension API:
 - The agent should use `plan_mode_question` for important non-discoverable preferences or tradeoffs before finalizing.
 - The agent completes with a standalone `plan_mode_complete` tool call instead of relying on semantic prose detection.
 - `update_plan` checklist use is blocked while Plan mode is active.
-- The implementation boundary is explicit: Plan mode appends the Normal contract and lifts its runtime allowlist before saving or starting implementation, while the session tool envelope remains stable.
+- The implementation boundary is explicit: Plan mode appends the Normal contract and lifts its runtime allowlist before saving or starting implementation, while revealed helpers remain active.
 - The default `clear-on-start` policy follows Codex by using ordinary conversation history only; `clear-after-first-run` and `keep` add explicit exact-plan guarantees.
 - Pi extension safety is approximated with tool classification and fail-closed filtering for every effective tool named `bash`; other non-built-in tools remain user-selected at user risk because Pi does not expose standardized tool mutability metadata.
-- Plan and Normal instructions are append-only conversation contracts while the base system prompt and tool schemas stay stable; providers can therefore reuse the retained prefix when their own cache rules permit it.
+- Plan and Normal instructions are append-only conversation contracts; **Always** keeps tool schemas stable from startup, while **After first plan** intentionally changes the helper schema and prompt-metadata prefix once before keeping it stable.
 - Unlike native Codex, this extension uses a terminating Pi tool plus an `agent_settled` ready flow; Pi cannot provide sandbox-level enforcement.
 
 ## 🗂️ Package layout

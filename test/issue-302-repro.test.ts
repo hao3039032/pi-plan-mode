@@ -41,7 +41,13 @@ test("issue 302: history-only implementation stays ordinary context when Plan Mo
 
 	await mock.commands.get("plan")?.handler("start", context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), "plan active");
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "custom"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"bash",
+		"custom",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 
 	const beforeStart = mock.events.get("before_agent_start")?.[0];
 	assert.ok(beforeStart);

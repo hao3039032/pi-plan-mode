@@ -8,9 +8,11 @@ import {
 	configuredImplementationPlanRetention,
 	configuredPlanExportPath,
 	configuredPlanModeToggleShortcut,
+	configuredPlanModeToolVisibility,
 	IMPLEMENTATION_PLAN_RETENTIONS,
 	normalizeKeyId,
 	PLAN_MODE_THINKING_LEVELS,
+	PLAN_MODE_TOOL_VISIBILITIES,
 	type PlanModeSettings,
 	type PlanModeSettingsLoadResult,
 	type PlanModeSettingsPatch,
@@ -47,6 +49,7 @@ export interface PlanModeSettingsMenuOptions {
 type Screen = "settings" | "tools" | "export" | "shortcut";
 type Action =
 	| "set-thinking"
+	| "set-tool-visibility"
 	| "open-tools"
 	| "toggle-tool"
 	| "reset-tools"
@@ -140,6 +143,17 @@ export async function showPlanModeSettings(
 									currentValue: configuredPlanModeToggleShortcut(state.settings) ?? "none",
 									action: "open-shortcut",
 								},
+								{
+									id: "toolVisibility",
+									label: "Plan tools",
+									description:
+										"Keep Plan helper tools visible, or reveal them after the first plan.",
+									currentValue: toolVisibilityLabel(
+										configuredPlanModeToolVisibility(state.settings),
+									),
+									values: PLAN_MODE_TOOL_VISIBILITIES.map(toolVisibilityLabel),
+									action: "set-tool-visibility",
+								},
 							],
 						},
 			tools: ({ state }) => ({
@@ -204,6 +218,16 @@ export async function showPlanModeSettings(
 					{ thinkingLevel: value as PlanModeSettings["thinkingLevel"] },
 					signal,
 					`Plan mode thinking level: ${value}. Applies to the next Plan workflow.`,
+				);
+			},
+			"set-tool-visibility": async ({ ctx: actionCtx, value, signal }) => {
+				const toolVisibility = toolVisibilityFromLabel(value);
+				if (!toolVisibility) return { kind: "rejected" };
+				return savePatch(
+					actionCtx,
+					{ toolVisibility },
+					signal,
+					`Plan tools: ${toolVisibilityLabel(toolVisibility)}.`,
 				);
 			},
 			"open-tools": async () => ({ kind: "to", screen: "tools" }),
@@ -337,6 +361,16 @@ function invalidScreen(settingsPath: string, state: SettingsMenuState) {
 
 function retentionFromLabel(value: string | undefined) {
 	return IMPLEMENTATION_PLAN_RETENTIONS.find((retention) => retentionLabel(retention) === value);
+}
+
+function toolVisibilityLabel(value: PlanModeSettings["toolVisibility"] | "after-first-plan") {
+	return value === "always" ? "Always" : "After first plan";
+}
+
+function toolVisibilityFromLabel(value: string | undefined) {
+	return PLAN_MODE_TOOL_VISIBILITIES.find(
+		(visibility) => toolVisibilityLabel(visibility) === value,
+	);
 }
 
 function defaultToolsValue(configured: string[] | undefined) {
