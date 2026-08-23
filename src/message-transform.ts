@@ -125,32 +125,49 @@ interface HistoryImplementationArtifact {
 	messageIndex: number;
 	kind: "completion" | "legacy" | "presentation";
 	toolCallId?: string;
+	toolCallMessageIndex?: number;
 }
 
+// The kickoff text is intentionally generic, so only trust a plan artifact in the same
+// uninterrupted user/summary segment and require a complete tool-call/result pair.
 export function findHistoryImplementationArtifact(
 	messages: unknown[],
 ): HistoryImplementationArtifact | undefined {
-	let kickoffIndex = -1;
 	for (let index = messages.length - 1; index >= 0; index -= 1) {
 		const candidate = unwrapSessionMessage(messages[index]);
 		if (
-			candidate.role === "user" &&
-			contentText(candidate.content).trim() === PLAN_HISTORY_IMPLEMENTATION_PROMPT
+			candidate.role !== "user" ||
+			contentText(candidate.content).trim() !== PLAN_HISTORY_IMPLEMENTATION_PROMPT
 		) {
-			kickoffIndex = index;
-			break;
+			continue;
 		}
+		const artifact = findHistoryImplementationArtifactBeforeKickoff(messages, index);
+		if (artifact) return artifact;
 	}
-	if (kickoffIndex < 0) return undefined;
+	return undefined;
+}
 
+function findHistoryImplementationArtifactBeforeKickoff(
+	messages: unknown[],
+	kickoffIndex: number,
+): HistoryImplementationArtifact | undefined {
 	for (let index = kickoffIndex - 1; index >= 0; index -= 1) {
 		const candidate = unwrapSessionMessage(messages[index]);
+		if (candidate.role === "user" || isSummaryMessage(messages[index])) return undefined;
 		if (candidate.role === "toolResult" && candidate.toolName === PLAN_MODE_COMPLETE_TOOL_NAME) {
-			return {
-				messageIndex: index,
-				kind: "completion",
-				toolCallId: candidate.toolCallId,
-			};
+			const toolCallId = candidate.toolCallId;
+			const toolCallMessageIndex = toolCallId
+				? findPlanModeCompletionCallMessageIndex(messages, index, toolCallId)
+				: undefined;
+			if (toolCallId && toolCallMessageIndex !== undefined) {
+				return {
+					messageIndex: index,
+					kind: "completion",
+					toolCallId,
+					toolCallMessageIndex,
+				};
+			}
+			continue;
 		}
 		if (candidate.customType === PROPOSED_PLAN_MESSAGE_TYPE) {
 			return { messageIndex: index, kind: "presentation" };
@@ -160,6 +177,31 @@ export function findHistoryImplementationArtifact(
 			contentText(candidate.content).match(PROPOSED_PLAN_BLOCK_PATTERN)
 		) {
 			return { messageIndex: index, kind: "legacy" };
+		}
+	}
+	return undefined;
+}
+
+function findPlanModeCompletionCallMessageIndex(
+	messages: unknown[],
+	endIndex: number,
+	toolCallId: string,
+) {
+	for (let index = endIndex - 1; index >= 0; index -= 1) {
+		const candidate = unwrapSessionMessage(messages[index]);
+		if (candidate.role === "user" || isSummaryMessage(messages[index])) return undefined;
+		if (!Array.isArray(candidate.content)) continue;
+		if (
+			candidate.content.some((block) => {
+				const toolCall = block as { type?: string; id?: string; name?: string };
+				return (
+					toolCall.type === "toolCall" &&
+					toolCall.id === toolCallId &&
+					toolCall.name === PLAN_MODE_COMPLETE_TOOL_NAME
+				);
+			})
+		) {
+			return index;
 		}
 	}
 	return undefined;

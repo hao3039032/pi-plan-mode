@@ -426,6 +426,92 @@ test("conversation-history fresh kickoff skips active state and recovers in the 
 	assert.doesNotMatch(replacement.notifications.at(-1)?.message ?? "", /active plan/i);
 });
 
+test("fresh success notification failures do not downgrade or duplicate kickoff", async () => {
+	let kickoffCalls = 0;
+	const replacement = createMockContext({ mode: "tui", hasUI: true });
+	const replacementUi = (
+		replacement.ctx as unknown as {
+			ui: { notify(message: string, level?: string): void };
+		}
+	).ui;
+	replacementUi.notify = () => {
+		throw new Error("replacement notification is stale");
+	};
+	const source = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		model: { provider: "test-provider", id: "test-model" },
+		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true as const }) },
+		sessionManager: { getSessionFile: () => "/sessions/planning.jsonl" },
+		newSession: async (options: { withSession?: (ctx: unknown) => Promise<void> }) => {
+			await options.withSession?.({
+				...(replacement.ctx as object),
+				async sendUserMessage() {
+					kickoffCalls += 1;
+				},
+			});
+			return { cancelled: false };
+		},
+	});
+
+	const result = await startFreshImplementationSession(source.ctx, {
+		plan: PLAN,
+		source: "plan_mode_complete",
+		retention: "clear-on-start",
+		stateEntryType: STATE_ENTRY_TYPE,
+		isCurrent: () => true,
+	});
+
+	assert.equal(result.kind, "started");
+	assert.equal(kickoffCalls, 1);
+	assert.equal(replacement.editorText, "");
+});
+
+test("fresh recovery reports when a stale editor cannot accept the request", async () => {
+	const replacement = createMockContext({ mode: "tui", hasUI: true });
+	const replacementUi = (
+		replacement.ctx as unknown as {
+			ui: { setEditorText(value: string): void };
+		}
+	).ui;
+	replacementUi.setEditorText = () => {
+		throw new Error("replacement editor is stale");
+	};
+	const source = createMockContext({
+		mode: "tui",
+		hasUI: true,
+		model: { provider: "test-provider", id: "test-model" },
+		modelRegistry: { getApiKeyAndHeaders: async () => ({ ok: true as const }) },
+		sessionManager: { getSessionFile: () => "/sessions/planning.jsonl" },
+		newSession: async (options: {
+			setup?: (sessionManager: {
+				appendCustomEntry(customType: string, data: unknown): string;
+			}) => Promise<void>;
+			withSession?: (ctx: unknown) => Promise<void>;
+		}) => {
+			await options.setup?.({
+				appendCustomEntry() {
+					throw new Error("state persistence failed");
+				},
+			});
+			await options.withSession?.(replacement.ctx);
+			return { cancelled: false };
+		},
+	});
+
+	const result = await startFreshImplementationSession(source.ctx, {
+		plan: PLAN,
+		source: "plan_mode_complete",
+		retention: "keep",
+		stateEntryType: STATE_ENTRY_TYPE,
+		isCurrent: () => true,
+	});
+
+	assert.equal(result.kind, "partial");
+	assert.match(replacement.notifications.at(-1)?.message ?? "", /could not be restored/i);
+	assert.doesNotMatch(replacement.notifications.at(-1)?.message ?? "", /request is in the editor/i);
+});
+
 test("fresh replacement reports recoverable setup and kickoff failures as partial", async () => {
 	for (const failure of ["setup", "kickoff"] as const) {
 		let appendedState: unknown;

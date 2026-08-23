@@ -80,6 +80,10 @@ export function createImplementationRetentionCoordinator(): ImplementationRetent
 			const historyArtifactMessage = historyArtifact
 				? inactiveMessages[historyArtifact.messageIndex]
 				: undefined;
+			const historyToolCallMessage =
+				historyArtifact?.toolCallMessageIndex !== undefined
+					? inactiveMessages[historyArtifact.toolCallMessageIndex]
+					: undefined;
 			const filteredMessages = inactiveMessages
 				.filter(
 					(message) =>
@@ -91,7 +95,10 @@ export function createImplementationRetentionCoordinator(): ImplementationRetent
 						: stripProposedPlanBlocksFromMessage(message),
 				)
 				.map((message) =>
-					stripPlanModeCompletionCallsFromMessage(message, historyArtifact?.toolCallId),
+					stripPlanModeCompletionCallsFromMessage(
+						message,
+						message === historyToolCallMessage ? historyArtifact?.toolCallId : undefined,
+					),
 				)
 				.filter((message) => !isEmptyAssistantMessage(message));
 			if (!activeImplementation) return { messages: filteredMessages };

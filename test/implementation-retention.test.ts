@@ -163,14 +163,92 @@ test("conversation-history context keeps only the latest completed plan before k
 		},
 	];
 	const oldCompletion = completion("old-plan", "# Old plan");
+	const duplicateCurrentCall = {
+		role: "assistant",
+		content: [
+			{
+				type: "toolCall",
+				id: "current-plan",
+				name: "plan_mode_complete",
+				arguments: { plan: "# Corrupt duplicate" },
+			},
+		],
+	};
 	const currentCompletion = completion("current-plan", PLAN);
 	const kickoff = { role: "user", content: "Implement the plan." };
 	const transformed = (await contextHook(
-		{ messages: [...oldCompletion, ...currentCompletion, kickoff] },
+		{ messages: [...oldCompletion, duplicateCurrentCall, ...currentCompletion, kickoff] },
 		context.ctx,
 	)) as { messages: unknown[] };
 
 	assert.deepEqual(transformed.messages, [...currentCompletion, kickoff]);
+});
+
+test("conversation-history context does not revive plans across user or summary boundaries", async () => {
+	const mock = createMockPi({ activeTools: ["read", "edit"] });
+	planMode(mock.pi);
+	const context = createMockContext();
+	const contextHook = mock.events.get("context")?.[0];
+	assert.ok(contextHook);
+	const planCall = {
+		role: "assistant",
+		content: [{ type: "toolCall", id: "complete-plan", name: "plan_mode_complete", arguments: {} }],
+	};
+	const planResult = {
+		role: "toolResult",
+		toolCallId: "complete-plan",
+		toolName: "plan_mode_complete",
+		content: [{ type: "text", text: PLAN }],
+	};
+	const kickoff = { role: "user", content: "Implement the plan." };
+	const completedWork = { role: "assistant", content: "Implementation finished." };
+	const unrelated = { role: "user", content: "Do unrelated work." };
+	const laterKickoff = { role: "user", content: "Implement the plan." };
+	const afterUserBoundary = (await contextHook(
+		{ messages: [planCall, planResult, unrelated, completedWork, laterKickoff] },
+		context.ctx,
+	)) as { messages: unknown[] };
+	assert.deepEqual(afterUserBoundary.messages, [unrelated, completedWork, laterKickoff]);
+
+	const followUp = { role: "user", content: "Continue with verification." };
+	const naturalHistory = (await contextHook(
+		{ messages: [planCall, planResult, kickoff, completedWork, followUp] },
+		context.ctx,
+	)) as { messages: unknown[] };
+	assert.deepEqual(naturalHistory.messages, [
+		planCall,
+		planResult,
+		kickoff,
+		completedWork,
+		followUp,
+	]);
+
+	const summary = { role: "compactionSummary", summary: "The older plan is summarized." };
+	const afterSummaryBoundary = (await contextHook(
+		{ messages: [planCall, planResult, summary, laterKickoff] },
+		context.ctx,
+	)) as { messages: unknown[] };
+	assert.deepEqual(afterSummaryBoundary.messages, [summary, laterKickoff]);
+});
+
+test("conversation-history context drops orphaned completion results", async () => {
+	const mock = createMockPi({ activeTools: ["read", "edit"] });
+	planMode(mock.pi);
+	const context = createMockContext();
+	const contextHook = mock.events.get("context")?.[0];
+	assert.ok(contextHook);
+	const orphanedResult = {
+		role: "toolResult",
+		toolCallId: "missing-call",
+		toolName: "plan_mode_complete",
+		content: [{ type: "text", text: PLAN }],
+	};
+	const kickoff = { role: "user", content: "Implement the plan." };
+	const transformed = (await contextHook({ messages: [orphanedResult, kickoff] }, context.ctx)) as {
+		messages: unknown[];
+	};
+
+	assert.deepEqual(transformed.messages, [kickoff]);
 });
 
 test("conversation-history context preserves a legacy proposed plan without reinjection", async () => {
