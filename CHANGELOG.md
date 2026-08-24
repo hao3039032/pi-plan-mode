@@ -1,5 +1,14 @@
 # @narumitw/pi-plan-mode
 
+## 0.53.1
+
+### Patch Changes
+
+- 02878f5: Add an editor-style divider above the Plan mode widget.
+- 3346683: Publish generated lazy chunks at the JavaScript paths referenced by each extension runtime so deferred menus and implementations load correctly through Pi's Jiti loader.
+- Updated dependencies [b9eba3a]
+  - @narumitw/pi-tui-kit@0.58.0
+
 ## 0.53.0
 
 ### Minor Changes
