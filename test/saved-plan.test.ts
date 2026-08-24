@@ -7,6 +7,7 @@ import {
 } from "../../../test/support.js";
 import planMode, { completePlanArguments } from "../src/plan-mode.js";
 import { restorePlanModeState } from "../src/state.js";
+import { renderMockWidget } from "./widget-support.js";
 
 const PLAN = `# Saved implementation plan
 
@@ -107,7 +108,10 @@ test("plan save exits Plan mode, restores runtime state, and keeps the plan out 
 	await mock.commands.get("plan")?.handler("save", context.ctx);
 
 	assert.equal(context.statuses.get("plan-mode"), "plan saved");
-	assert.match(JSON.stringify(context.widgets.get("plan-mode-plan")), /saved for later/i);
+	assert.match(
+		renderMockWidget(context.widgets.get("plan-mode-plan")).join("\n"),
+		/saved for later/i,
+	);
 	assert.deepEqual(mock.rawPi.getActiveTools(), [
 		"read",
 		"edit",

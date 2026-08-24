@@ -16,6 +16,7 @@ import planMode, {
 	stripProposedPlanBlocks,
 	stripProposedPlanBlocksFromMessage,
 } from "../src/plan-mode.js";
+import { renderMockWidget } from "./widget-support.js";
 
 test("plan-mode registers question tools, command, and safety hooks without a CLI flag", () => {
 	const mock = createMockPi({ activeTools: ["read", "bash"] });
@@ -1300,7 +1301,8 @@ test("active Plan UI advertises the completion tool rather than legacy XML", asy
 		},
 	});
 	await mock.commands.get("plan")?.handler("start", context.ctx);
-	const widget = context.widgets.get("plan-mode-plan") as string[];
+	const widget = renderMockWidget(context.widgets.get("plan-mode-plan"));
+	assert.equal(widget[0], "─".repeat(80));
 	assert.match(widget.join("\n"), /plan_mode_complete/);
 	assert.doesNotMatch(widget.join("\n"), /proposed_plan/);
 	await mock.commands.get("plan")?.handler("", context.ctx);

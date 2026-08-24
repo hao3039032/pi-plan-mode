@@ -8,6 +8,7 @@ import {
 import { PLAN_MODE_MAX_CHARS } from "../src/completion-tool.js";
 import planModeExtension from "../src/plan-mode.js";
 import { type ActiveImplementationPlan, restorePlanModeState } from "../src/state.js";
+import { renderMockWidget } from "./widget-support.js";
 
 const PLAN = `# Compaction-safe implementation
 
@@ -277,7 +278,7 @@ test("implementation transition rejects a busy run before committing and succeed
 	await mock.commands.get("plan")?.handler("implement", context.ctx);
 	assert.equal(context.statuses.get("plan-mode"), "plan implementing");
 	assert.match(
-		JSON.stringify(context.widgets.get("plan-mode-plan")),
+		renderMockWidget(context.widgets.get("plan-mode-plan")).join("\n"),
 		/implementation plan active/i,
 	);
 	assert.deepEqual(mock.rawPi.getActiveTools(), [

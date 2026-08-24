@@ -1,8 +1,10 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { stripTerminalSequences, truncateToWidth } from "@earendil-works/pi-tui";
 import type { PlanModeState } from "./state.js";
 
 const STATUS_KEY = "plan-mode";
 const PLAN_WIDGET_KEY = "plan-mode-plan";
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
 
 export function updatePlanModeUi(
 	ctx: ExtensionContext,
@@ -10,30 +12,44 @@ export function updatePlanModeUi(
 	toolSummary: () => string,
 ) {
 	ctx.ui.setStatus(STATUS_KEY, formatStatus(state));
+	let lines: string[] | undefined;
 	if (state.enabled && state.latestPlan) {
-		ctx.ui.setWidget(PLAN_WIDGET_KEY, [
-			"Proposed plan ready",
-			"Use /plan to implement, save, revise, or exit Plan mode.",
-		]);
+		lines = ["Proposed plan ready", "Use /plan to implement, save, revise, or exit Plan mode."];
 	} else if (state.enabled) {
-		ctx.ui.setWidget(PLAN_WIDGET_KEY, [
+		lines = [
 			"Plan mode: planning",
 			toolSummary(),
 			"Finish with plan_mode_complete when decision-ready.",
-		]);
+		];
 	} else if (state.savedPlan) {
-		ctx.ui.setWidget(PLAN_WIDGET_KEY, [
-			"Plan saved for later",
-			"Use /plan to show, implement, or clear it.",
-		]);
+		lines = ["Plan saved for later", "Use /plan to show, implement, or clear it."];
 	} else if (state.activeImplementation) {
-		ctx.ui.setWidget(PLAN_WIDGET_KEY, [
-			"Implementation plan active",
-			"Use /plan to show, replace, or clear it.",
-		]);
-	} else {
-		ctx.ui.setWidget(PLAN_WIDGET_KEY, undefined);
+		lines = ["Implementation plan active", "Use /plan to show, replace, or clear it."];
 	}
+
+	publishPlanModeWidget(ctx, lines);
+}
+
+export function renderPlanModeWidget(
+	lines: readonly string[],
+	theme: Theme,
+	width: number,
+): string[] {
+	const renderWidth = Math.max(0, width);
+	return [
+		theme.fg("borderMuted", "─".repeat(renderWidth)),
+		...lines.map((line) => truncateToWidth(sanitizePlanModeWidgetLine(line), renderWidth, "")),
+	];
+}
+
+export function sanitizePlanModeWidgetLine(value: string): string {
+	let text = "";
+	for (const character of stripTerminalSequences(value).replace(BIDI_CONTROLS, "")) {
+		const codePoint = character.codePointAt(0) ?? 0;
+		const isControl = codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+		text += isControl ? " " : character;
+	}
+	return text;
 }
 
 export function clearPlanModeUi(ctx: ExtensionContext) {
@@ -95,6 +111,23 @@ export function planModeStatusText(state: PlanModeState, toolSummary: () => stri
 	if (state.savedPlan) return "A plan is saved for later.";
 	if (state.activeImplementation) return "An implementation plan is active.";
 	return "Plan mode is off.";
+}
+
+function publishPlanModeWidget(ctx: ExtensionContext, lines: readonly string[] | undefined) {
+	if (!lines) {
+		ctx.ui.setWidget(PLAN_WIDGET_KEY, undefined);
+		return;
+	}
+	if (ctx.mode !== "tui") {
+		ctx.ui.setWidget(PLAN_WIDGET_KEY, [...lines]);
+		return;
+	}
+
+	const snapshot = [...lines];
+	ctx.ui.setWidget(PLAN_WIDGET_KEY, (_tui, theme) => ({
+		render: (width) => renderPlanModeWidget(snapshot, theme, width),
+		invalidate: () => {},
+	}));
 }
 
 function formatStatus(state: PlanModeState) {
