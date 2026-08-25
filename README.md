@@ -14,12 +14,13 @@ This independently installable extension adds a Codex-like `/plan` collaboration
 - Reviews the complete plan before implementation, export, save, continued planning, or discard.
 - Starts implementation in the planning session or a fresh linked session with the exact approved plan.
 - Persists Plan state and one saved plan across resume and compaction.
-- Exposes statusline state and a configurable Plan tool allowlist, export destination, plan reinjection, shortcut, and thinking level.
+- Exposes statusline state and a configurable Plan tool allowlist, including reviewed native PowerShell inspection on Windows, plus export destination, plan reinjection, shortcut, and thinking level.
 - Cooperates anonymously with Workflow Mutex Protocol v1 participants so only one agent workflow starts in a session.
 
 ## 📦 Install
 
 This release requires Pi 0.80.6 or newer.
+Native PowerShell tool support requires Pi 0.84.3 or newer on Windows; earlier Pi versions omit that optional tool and retain the existing Plan policy.
 
 ```bash
 pi install npm:@narumitw/pi-plan-mode
@@ -143,18 +144,26 @@ Plan mode registers `plan_mode_question` and `plan_mode_complete` during extensi
 With the default **After first plan** visibility, `session_start` leaves both helpers inactive until the first admitted Plan workflow appends them in that order.
 With **Always**, `session_start` appends missing helpers in the same canonical order.
 Once revealed, ordinary Plan transitions never remove them during that extension runtime.
-By default, the Plan policy allows active safe built-ins such as `read`, limited `bash`, `grep`, `find`, and `ls`.
+By default, the Plan policy allows active safe built-ins such as `read`, limited `bash`, limited `powershell`, `grep`, `find`, and `ls`.
+The optional native `powershell` tool must already be active, for example through Pi's Windows `defaultTools` setting, before Plan mode can select it.
 Built-in `edit` and `write`, `update_plan`, inactive tools, and deselected tools are blocked at execution time even though active schemas remain visible.
 Extension and custom tools are denied by default because Pi tools do not expose standardized mutability metadata; allow an already active custom tool before starting only when you accept the risk.
 For example, you can opt into an active `firecrawl_scrape`, `firecrawl_search`, or `lsp_diagnostics` tool when you want to use it during planning.
 After they become visible, the Plan-only helpers remain visible in Normal mode, but their handlers and the `tool_call` policy reject calls unless Plan mode owns the active workflow.
 
-Limited `bash` uses a fail-closed policy, including when an extension overrides the canonical `bash` tool name.
+Limited `bash` uses a fail-closed Bash policy, including when an extension overrides the canonical `bash` tool name.
 It accepts common inspection commands, read-only Git and npm queries, pipelines and command lists composed entirely of accepted commands, plus selected checks such as `npm test`, `npm run typecheck`, and `cargo test`.
 It rejects output/input redirects, shell expansion, substitutions, subshells, background jobs, mutating flags, dependency changes, editors, and unknown commands.
+
+Limited `powershell` uses a separate fail-closed PowerShell policy, including when an extension overrides the canonical `powershell` tool name.
+It accepts canonical inspection cmdlets such as `Get-ChildItem`, `Get-Content`, `Get-Item`, `Get-Location`, `Resolve-Path`, `Select-String`, `Test-Path`, `Measure-Object`, `Sort-Object`, `Format-List`, `Format-Table`, `Out-String`, and `Write-Output`.
+It also accepts the same reviewed `git` and configured `gh` queries as limited Bash, including pipelines and semicolon-delimited command lists composed entirely of accepted commands.
+It rejects redirects, variables, substitutions, script blocks, call operators, type or method expressions, stop-parsing tokens, multiline input, aliases, mutating cmdlets, and unknown commands.
+Use canonical cmdlet names because PowerShell aliases are intentionally outside the reviewed policy.
+
 A rejected parsed command list or pipeline identifies its first blocked command segment; malformed or unsupported shell syntax reports the complete submitted input instead.
 Tests and builds may still write ignored caches or build artifacts and may execute project-defined hooks; enable or invoke them only when the repository is trusted.
-This is extension-level risk reduction, not an OS sandbox.
+Both limited-shell policies are extension-level risk reduction, not an OS sandbox or confidentiality boundary.
 
 `plan_mode_question` follows Codex's `request_user_input` pattern: the agent can ask 1-3 concise questions, each with meaningful options and a free-form Other path.
 In TUI mode, a single question shows its header as plain muted text, submits as soon as its preset or custom answer is confirmed, and does not show tabs, Review, or question-navigation controls.
@@ -349,7 +358,7 @@ An ordinary tool registered or activated after the startup baseline is outside t
 Non-built-in names in this global setting are an explicit user-risk opt-in, just like selecting them in the pre-start workflow selector.
 Plan mode does not interpret a selected custom tool's arguments or actions: allowing one trusts the whole effective tool.
 Pi resolves tools by name, so if an extension overrides a built-in name, the effective extension tool is selected instead.
-An effective active tool named `bash` remains subject to the limited-shell policy regardless of its source metadata.
+An effective active tool named `bash` or `powershell` remains subject to its limited-shell policy regardless of its source metadata.
 
 A selection accepted through **Choose tools, then start…** or `/plan tools` is stored in that Pi session and takes precedence over `defaultPlanTools` when the session resumes.
 The global setting remains the policy baseline for fresh sessions and sessions without an explicit selection.
@@ -392,7 +401,7 @@ Avoid values that conflict with editor shortcuts.
 
 ### Safe shell subcommands
 
-`safeSubcommands` adds reviewed command validators to limited `bash`; it is not a raw shell allowlist.
+`safeSubcommands` adds reviewed command validators to limited `bash` and `powershell`; it is not a raw shell allowlist.
 Only the following exact values are accepted:
 
 - `git`: `status`, `log`, `diff`, `show`, `branch`, `remote`, `ls-files`, `grep`, `rev-parse`, `blame`, `describe`, `merge-base`, `ls-tree`, and `cat-file`.
@@ -472,7 +481,7 @@ This extension maps Codex's `ModeKind::Plan` behavior onto Pi's extension API:
 - `update_plan` checklist use is blocked while Plan mode is active.
 - The implementation boundary is explicit: Plan mode appends the Normal contract and lifts its runtime allowlist before saving or starting implementation, while revealed helpers remain active.
 - The default `clear-on-start` policy follows Codex by using ordinary conversation history only; `clear-after-first-run` and `keep` add explicit exact-plan guarantees.
-- Pi extension safety is approximated with tool classification and fail-closed filtering for every effective tool named `bash`; other non-built-in tools remain user-selected at user risk because Pi does not expose standardized tool mutability metadata.
+- Pi extension safety is approximated with tool classification and separate fail-closed filtering for every effective tool named `bash` or `powershell`; other non-built-in tools remain user-selected at user risk because Pi does not expose standardized tool mutability metadata.
 - Plan and Normal instructions are append-only conversation contracts; **Always** keeps tool schemas stable from startup, while **After first plan** intentionally changes the helper schema and prompt-metadata prefix once before keeping it stable.
 - Unlike native Codex, this extension uses a terminating Pi tool plus an `agent_settled` ready flow; Pi cannot provide sandbox-level enforcement.
 

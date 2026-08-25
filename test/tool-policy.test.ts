@@ -12,11 +12,16 @@ import planMode, {
 	isSafeCommand,
 	withRequiredPlanModeTools,
 } from "../src/plan-mode.js";
-import { findBlockedCommandSegment } from "../src/tool-policy.js";
+import {
+	findBlockedCommandSegment,
+	findBlockedPowerShellCommandSegment,
+	isSafePowerShellCommand,
+} from "../src/tool-policy.js";
 
 test("tool selection allows safe built-ins and non-built-ins only", () => {
 	type PlanTool = Parameters<typeof canSelectToolInPlanMode>[0];
 	assert.equal(canSelectToolInPlanMode(builtinTool("read") as PlanTool), true);
+	assert.equal(canSelectToolInPlanMode(builtinTool("powershell") as PlanTool), true);
 	assert.equal(canSelectToolInPlanMode(builtinTool("edit") as PlanTool), false);
 	assert.equal(canSelectToolInPlanMode(extensionTool("custom") as PlanTool), true);
 	assert.equal(canSelectToolInPlanMode(extensionTool("edit") as PlanTool), true);
@@ -117,6 +122,94 @@ test("blocked command diagnostics identify the first rejected segment", () => {
 	for (const command of [accepted, singleBlocked, compoundBlocked, unsupportedSyntax, "   "]) {
 		assert.equal(isSafeCommand(command), findBlockedCommandSegment(command) === undefined, command);
 	}
+});
+
+test("PowerShell policy permits reviewed inspection commands", () => {
+	for (const command of [
+		"Get-ChildItem -Filter *.ts",
+		"Get-Content -LiteralPath 'README file.md'",
+		"gEt-LoCaTiOn",
+		"Get-Item Env:PI_MODEL",
+		"Get-Location",
+		"Resolve-Path .",
+		"Select-String -Path README.md -Pattern 'Plan mode'",
+		"Test-Path packages\\pi-plan-mode",
+		"Get-Content README.md | Select-String -Pattern Plan",
+		"Get-ChildItem packages; Measure-Object",
+		"Get-ChildItem | Sort-Object Name | Format-Table Name",
+		"Write-Output 'safe; Remove-Item README.md'",
+		"Write-Output '$env:PI_MODEL'",
+		"Write-Output 'status'; git status --short",
+		"git log -1 --oneline",
+	]) {
+		assert.equal(isSafePowerShellCommand(command), true, command);
+	}
+});
+
+test("PowerShell policy rejects mutation and dynamic execution syntax", () => {
+	for (const command of [
+		"Remove-Item README.md",
+		"Set-Content README.md changed",
+		"New-Item output.txt",
+		"Copy-Item source target",
+		"Invoke-Expression 'Get-ChildItem'",
+		"Start-Process git",
+		"Get-Content README.md > copy.md",
+		"Get-Content $env:PI_SESSION_FILE",
+		"Get-Content $(Get-Location)",
+		"Get-ChildItem | ForEach-Object { Remove-Item $_ }",
+		"& 'git' status",
+		"[System.IO.File]::Delete('README.md')",
+		'Get-Content `"README.md`"',
+		"git reset --hard",
+		"git status; Remove-Item README.md",
+		"Get-ChildItem && Remove-Item README.md",
+		"Get-ChildItem || Set-Content README.md changed",
+		"Get-Content README.md | Tee-Object copy.md",
+		"Test-Path README.md ? Get-Content README.md : Remove-Item README.md",
+		"Get-ChildItem ?? Remove-Item README.md",
+		"Get-ChildItem ! Remove-Item README.md",
+		"git --% status; Remove-Item README.md",
+		"Get-ChildItem # comment",
+		"npm test",
+		"node --version",
+		"cmd /c dir",
+		"powershell -Command Get-ChildItem",
+		"Get-Content README.md\nRemove-Item README.md",
+		"",
+	]) {
+		assert.equal(isSafePowerShellCommand(command), false, command);
+	}
+});
+
+test("PowerShell diagnostics identify the first rejected segment", () => {
+	const accepted = "Get-ChildItem -Force; git status --short | Select-String modified";
+	const blocked = "Get-ChildItem; git status --short | Remove-Item README.md; Get-Location";
+	const unsupported = " Get-Content README.md > copy.md ";
+
+	assert.equal(findBlockedPowerShellCommandSegment(accepted), undefined);
+	assert.equal(findBlockedPowerShellCommandSegment(blocked), "Remove-Item README.md");
+	assert.equal(findBlockedPowerShellCommandSegment(unsupported), unsupported.trim());
+	assert.equal(findBlockedPowerShellCommandSegment("   "), "(empty command)");
+});
+
+test("PowerShell policy reuses configured Git and gh validators", () => {
+	assert.equal(isSafePowerShellCommand("git rev-parse --show-toplevel"), false);
+	assert.equal(
+		isSafePowerShellCommand("git rev-parse --show-toplevel", { git: ["rev-parse"] }),
+		true,
+	);
+	assert.equal(isSafePowerShellCommand("gh issue view 973 --json number,title"), false);
+	assert.equal(
+		isSafePowerShellCommand("gh issue view 973 --json number,title", { gh: ["issue view"] }),
+		true,
+	);
+	assert.equal(
+		isSafePowerShellCommand("gh issue view 973 --json number,title; git reset --hard", {
+			gh: ["issue view"],
+		}),
+		false,
+	);
 });
 
 test("configured Git validators are additive and exact", () => {
@@ -304,6 +397,7 @@ test("tool policy classifies built-ins and extension tools consistently", () => 
 	type PlanTool = Parameters<typeof classifyPlanModeTool>[0];
 	assert.equal(classifyPlanModeTool(builtinTool("read") as PlanTool), "read-only");
 	assert.equal(classifyPlanModeTool(builtinTool("bash") as PlanTool), "limited");
+	assert.equal(classifyPlanModeTool(builtinTool("powershell") as PlanTool), "limited");
 	assert.equal(classifyPlanModeTool(builtinTool("write") as PlanTool), "blocked");
 	assert.equal(classifyPlanModeTool(extensionTool("custom") as PlanTool), "user-opt-in");
 });

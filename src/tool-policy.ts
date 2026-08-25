@@ -33,7 +33,14 @@ export interface SafeSubcommands {
 	gh?: SafeGhSubcommandPath[];
 }
 
-export const SAFE_BUILTIN_PLAN_TOOLS = new Set(["read", "bash", "grep", "find", "ls"]);
+export const SAFE_BUILTIN_PLAN_TOOLS = new Set([
+	"read",
+	"bash",
+	"powershell",
+	"grep",
+	"find",
+	"ls",
+]);
 export type PlanModeToolPolicy = "read-only" | "limited" | "user-opt-in" | "blocked";
 
 const BLOCKED_BUILTIN_TOOLS = new Set(["edit", "write"]);
@@ -64,6 +71,21 @@ const MUTATING_COMMANDS = new Set([
 	"emacs",
 	"code",
 	"subl",
+]);
+const READ_ONLY_POWERSHELL_COMMANDS = new Set([
+	"format-list",
+	"format-table",
+	"get-childitem",
+	"get-content",
+	"get-item",
+	"get-location",
+	"measure-object",
+	"out-string",
+	"resolve-path",
+	"select-string",
+	"sort-object",
+	"test-path",
+	"write-output",
 ]);
 const READ_ONLY_COMMANDS = new Set([
 	"cat",
@@ -108,7 +130,7 @@ export function isBuiltinTool(tool: ToolInfo) {
 export function classifyPlanModeTool(tool: ToolInfo): PlanModeToolPolicy {
 	if (!isBuiltinTool(tool)) return "user-opt-in";
 	if (BLOCKED_BUILTIN_TOOLS.has(tool.name)) return "blocked";
-	if (tool.name === "bash") return "limited";
+	if (tool.name === "bash" || tool.name === "powershell") return "limited";
 	return SAFE_BUILTIN_PLAN_TOOLS.has(tool.name) ? "read-only" : "blocked";
 }
 
@@ -132,6 +154,128 @@ export function findBlockedCommandSegment(
 
 export function isSafeCommand(command: string, safeSubcommands: SafeSubcommands = {}) {
 	return findBlockedCommandSegment(command, safeSubcommands) === undefined;
+}
+
+export function findBlockedPowerShellCommandSegment(
+	command: string,
+	safeSubcommands: SafeSubcommands = {},
+): string | undefined {
+	const segments = splitPowerShellSegments(command);
+	if (!segments || segments.length === 0) return command.trim() || "(empty command)";
+	return segments.find((segment) => !isSafePowerShellSegment(segment, safeSubcommands));
+}
+
+export function isSafePowerShellCommand(command: string, safeSubcommands: SafeSubcommands = {}) {
+	return findBlockedPowerShellCommandSegment(command, safeSubcommands) === undefined;
+}
+
+function splitPowerShellSegments(command: string): string[] | undefined {
+	const trimmed = command.trim();
+	if (!trimmed || /[\n\r`]/.test(trimmed)) return undefined;
+
+	const segments: string[] = [];
+	let quote: "'" | '"' | undefined;
+	let start = 0;
+	for (let index = 0; index < trimmed.length; index += 1) {
+		const character = trimmed[index];
+		if (quote === "'") {
+			if (character !== "'") continue;
+			if (trimmed[index + 1] === "'") {
+				index += 1;
+				continue;
+			}
+			quote = undefined;
+			continue;
+		}
+		if (quote === '"') {
+			if (character === "$" || character === "`") return undefined;
+			if (character === '"') quote = undefined;
+			continue;
+		}
+		if (character === "'" || character === '"') {
+			quote = character;
+			continue;
+		}
+		if (["$", "@", "#", "!", "?", "{", "}", "(", ")", "[", "]", ">", "<"].includes(character)) {
+			return undefined;
+		}
+		const next = trimmed[index + 1];
+		if (character === "&" && next !== "&") return undefined;
+		const separatorLength =
+			character === ";"
+				? 1
+				: character === "|" || character === "&"
+					? next === character
+						? 2
+						: character === "|"
+							? 1
+							: 0
+					: 0;
+		if (separatorLength === 0) continue;
+		const segment = trimmed.slice(start, index).trim();
+		if (!segment) return undefined;
+		segments.push(segment);
+		index += separatorLength - 1;
+		start = index + 1;
+	}
+	if (quote) return undefined;
+	const finalSegment = trimmed.slice(start).trim();
+	if (!finalSegment) return undefined;
+	segments.push(finalSegment);
+	return segments;
+}
+
+function isSafePowerShellSegment(segment: string, safeSubcommands: SafeSubcommands) {
+	const tokens = powerShellWords(segment);
+	if (!tokens || tokens.length === 0 || tokens.includes("--%")) return false;
+	const command = tokens[0]?.toLowerCase();
+	if (!command) return false;
+	const args = tokens.slice(1);
+	if (READ_ONLY_POWERSHELL_COMMANDS.has(command)) return true;
+	if (command !== "git" && command !== "gh") return false;
+	return isSafeStructuredCommand(command, args, safeSubcommands);
+}
+
+function powerShellWords(segment: string): string[] | undefined {
+	const words: string[] = [];
+	let word = "";
+	let hasWord = false;
+	let quote: "'" | '"' | undefined;
+	for (let index = 0; index < segment.length; index += 1) {
+		const character = segment[index];
+		if (quote === "'") {
+			if (character !== "'") {
+				word += character;
+				continue;
+			}
+			if (segment[index + 1] === "'") {
+				word += "'";
+				index += 1;
+				continue;
+			}
+			quote = undefined;
+			continue;
+		}
+		if (quote === '"') {
+			if (character === '"') quote = undefined;
+			else word += character;
+			continue;
+		}
+		if (character === "'" || character === '"') {
+			quote = character;
+			hasWord = true;
+		} else if (/\s/.test(character)) {
+			if (hasWord) words.push(word);
+			word = "";
+			hasWord = false;
+		} else {
+			word += character;
+			hasWord = true;
+		}
+	}
+	if (quote) return undefined;
+	if (hasWord) words.push(word);
+	return words;
 }
 
 function splitShellSegments(command: string): string[] | undefined {

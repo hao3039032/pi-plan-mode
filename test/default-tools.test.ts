@@ -156,6 +156,38 @@ test("configured Plan tools are an allowlist over active tools, not an activatio
 	});
 });
 
+test("active PowerShell is an automatic safe built-in without changing tool schemas", async () => {
+	const baseline = ["read", "powershell", "write", ...HELPERS];
+	const mock = createMockPi({
+		activeTools: ["read", "powershell", "write"],
+		allTools: [builtinTool("read"), builtinTool("powershell"), builtinTool("write")],
+	});
+	planMode(mock.pi);
+	const context = createMockContext();
+
+	assert.equal(
+		await callTool(mock, context, "powershell", { command: "Remove-Item README.md" }),
+		undefined,
+		"inactive Plan mode must not enforce its PowerShell policy",
+	);
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+
+	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
+	assert.equal(
+		await callTool(mock, context, "powershell", { command: "Get-ChildItem -Force" }),
+		undefined,
+	);
+	assert.equal(
+		(
+			(await callTool(mock, context, "powershell", {
+				command: "Set-Content README.md changed",
+			})) as { block?: boolean }
+		).block,
+		true,
+	);
+});
+
 test("active selected custom tools execute while deselected and mutating tools fail closed", async () => {
 	const baseline = ["read", "bash", "write", "custom", ...HELPERS];
 	const mock = createMockPi({

@@ -111,6 +111,58 @@ test("active Plan mode enforces limited policy for effective bash overrides", as
 	});
 });
 
+test("active Plan mode enforces limited policy for effective PowerShell overrides", async () => {
+	await withAgentDir(async (agentDir) => {
+		await writeFile(
+			join(agentDir, "pi-plan-mode.json"),
+			JSON.stringify({
+				defaultPlanTools: ["powershell"],
+				safeSubcommands: { git: ["rev-parse"] },
+			}),
+		);
+		const mock = createMockPi({
+			activeTools: ["powershell"],
+			allTools: [extensionTool("powershell")],
+		});
+		planMode(mock.pi);
+		const context = createMockContext();
+		const hook = mock.events.get("tool_call")?.[0];
+		assert.ok(hook);
+
+		assert.equal(
+			await hook(
+				{ toolName: "powershell", input: { command: "Remove-Item README.md" } },
+				context.ctx,
+			),
+			undefined,
+			"inactive Plan mode must not enforce its PowerShell policy",
+		);
+		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+		await mock.commands.get("plan")?.handler("start", context.ctx);
+		assert.equal(
+			await hook(
+				{ toolName: "powershell", input: { command: "git rev-parse --show-toplevel" } },
+				context.ctx,
+			),
+			undefined,
+		);
+		assert.deepEqual(
+			await hook(
+				{
+					toolName: "powershell",
+					input: { command: "Get-ChildItem; Remove-Item README.md; Get-Location" },
+				},
+				context.ctx,
+			),
+			{
+				block: true,
+				reason:
+					"Plan mode blocks PowerShell commands outside its reviewed inspection policy or containing explicitly unsafe syntax.\nBlocked command: Remove-Item README.md",
+			},
+		);
+	});
+});
+
 test("session reload removes stale or invalid safe subcommand policy", async () => {
 	await withAgentDir(async (agentDir) => {
 		const settingsPath = join(agentDir, "pi-plan-mode.json");

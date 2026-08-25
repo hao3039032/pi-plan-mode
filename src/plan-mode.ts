@@ -89,6 +89,7 @@ import {
 	canSelectToolInPlanMode,
 	classifyPlanModeTool,
 	findBlockedCommandSegment,
+	findBlockedPowerShellCommandSegment,
 	readCommand,
 } from "./tool-policy.js";
 import {
@@ -601,14 +602,26 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				reason: `Plan mode blocks tool '${event.toolName}' because its safe policy metadata is unavailable.`,
 			};
 		}
-		if (event.toolName !== "bash") return;
-
-		const blocked = findBlockedCommandSegment(readCommand(event.input), settings.safeSubcommands);
-		if (blocked !== undefined) {
-			return {
-				block: true,
-				reason: `Plan mode blocks bash commands outside its reviewed inspection policy or containing explicitly unsafe arguments.\nBlocked command: ${blocked}`,
-			};
+		if (event.toolName === "bash") {
+			const blocked = findBlockedCommandSegment(readCommand(event.input), settings.safeSubcommands);
+			if (blocked !== undefined) {
+				return {
+					block: true,
+					reason: `Plan mode blocks bash commands outside its reviewed inspection policy or containing explicitly unsafe arguments.\nBlocked command: ${blocked}`,
+				};
+			}
+		}
+		if (event.toolName === "powershell") {
+			const blocked = findBlockedPowerShellCommandSegment(
+				readCommand(event.input),
+				settings.safeSubcommands,
+			);
+			if (blocked !== undefined) {
+				return {
+					block: true,
+					reason: `Plan mode blocks PowerShell commands outside its reviewed inspection policy or containing explicitly unsafe syntax.\nBlocked command: ${blocked}`,
+				};
+			}
 		}
 	});
 
