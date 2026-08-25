@@ -182,6 +182,25 @@ test("PowerShell policy rejects mutation and dynamic execution syntax", () => {
 	}
 });
 
+test("PowerShell policy rejects unsupported quote and statement syntax", () => {
+	for (let codePoint = 0x2018; codePoint <= 0x201e; codePoint += 1) {
+		const quote = String.fromCodePoint(codePoint);
+		const command = `Write-Output ${quote}safe${quote}`;
+		assert.equal(isSafePowerShellCommand(command), false, command);
+		assert.equal(findBlockedPowerShellCommandSegment(command), command);
+	}
+
+	for (const command of [
+		'Write-Output "safe\u201d; Remove-Item README.md \u201c"',
+		"Write-Output 'safe\u2019; Remove-Item README.md \u2018'",
+		"Write-Output one && Write-Output two",
+		"Write-Output one || Write-Output two",
+	]) {
+		assert.equal(isSafePowerShellCommand(command), false, command);
+		assert.equal(findBlockedPowerShellCommandSegment(command), command);
+	}
+});
+
 test("PowerShell diagnostics identify the first rejected segment", () => {
 	const accepted = "Get-ChildItem -Force; git status --short | Select-String modified";
 	const blocked = "Get-ChildItem; git status --short | Remove-Item README.md; Get-Location";

@@ -171,7 +171,7 @@ export function isSafePowerShellCommand(command: string, safeSubcommands: SafeSu
 
 function splitPowerShellSegments(command: string): string[] | undefined {
 	const trimmed = command.trim();
-	if (!trimmed || /[\n\r`]/.test(trimmed)) return undefined;
+	if (!trimmed || /[\n\r`\u2018-\u201e]/.test(trimmed)) return undefined;
 
 	const segments: string[] = [];
 	let quote: "'" | '"' | undefined;
@@ -200,17 +200,8 @@ function splitPowerShellSegments(command: string): string[] | undefined {
 			return undefined;
 		}
 		const next = trimmed[index + 1];
-		if (character === "&" && next !== "&") return undefined;
-		const separatorLength =
-			character === ";"
-				? 1
-				: character === "|" || character === "&"
-					? next === character
-						? 2
-						: character === "|"
-							? 1
-							: 0
-					: 0;
+		if (character === "&" || (character === "|" && next === "|")) return undefined;
+		const separatorLength = character === ";" || character === "|" ? 1 : 0;
 		if (separatorLength === 0) continue;
 		const segment = trimmed.slice(start, index).trim();
 		if (!segment) return undefined;
