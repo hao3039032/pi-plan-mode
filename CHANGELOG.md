@@ -1,5 +1,11 @@
 # @narumitw/pi-plan-mode
 
+## 0.54.0
+
+### Minor Changes
+
+- ab467e0: Allow Pi's active native PowerShell tool to run reviewed read-only file, directory, Git, and GitHub inspections in Plan mode while blocking mutation and unsupported dynamic syntax.
+
 ## 0.53.1
 
 ### Patch Changes
