@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { builtinTool, createMockContext, createMockPi } from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
+import { builtinTool, createMockContext, createMockPi } from "./support.js";
 
 interface CapturedRequest {
 	phase: "normal" | "plan" | "implementation";
@@ -76,7 +76,7 @@ async function completePlan(mock: ReturnType<typeof createMockPi>, ctx: unknown)
 	await complete("complete", { plan: "# Cache-stable plan" }, undefined, undefined, ctx);
 }
 
-test("always-visible cache contract keeps request fields stable across modes", async () => {
+test("stable Plan helper schema keeps request fields and inactive metadata safe", async () => {
 	const allTools = [
 		builtinTool("read"),
 		builtinTool("bash"),
@@ -87,7 +87,7 @@ test("always-visible cache contract keeps request fields stable across modes", a
 	planMode(mock.pi, {
 		readSettings: async () => ({
 			kind: "loaded" as const,
-			settings: { thinkingLevel: "inherit" as const, toolVisibility: "always" as const },
+			settings: { thinkingLevel: "inherit" as const },
 		}),
 	});
 	const context = createMockContext();
@@ -133,54 +133,24 @@ test("always-visible cache contract keeps request fields stable across modes", a
 			.map((message) => (message as { content?: unknown }).content),
 		["A", "B", "Implement the plan."],
 	);
-});
-
-test("after-first-plan changes helper definitions once and keeps the unlocked prefix stable", async () => {
-	const allTools = [
-		builtinTool("read"),
-		builtinTool("bash"),
-		builtinTool("edit"),
-		builtinTool("write"),
-	];
-	const mock = createMockPi({ activeTools: ["read", "bash", "edit", "write"], allTools });
-	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
-	const context = createMockContext();
-	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-
-	const normal = await captureRequest("normal", mock, context.ctx, [
-		{ role: "user", content: "A" },
-	]);
-	await mock.commands.get("plan")?.handler("start", context.ctx);
-	const planContract = mock.sentMessages.at(-1)?.message;
-	const plan = await captureRequest("plan", mock, context.ctx, [
-		{ role: "user", content: "A" },
-		planContract,
-		{ role: "user", content: "B" },
-	]);
-	await completePlan(mock, context.ctx);
-	await mock.commands.get("plan")?.handler("implement", context.ctx);
-	const implementation = await captureRequest("implementation", mock, context.ctx, [
-		{ role: "user", content: "A" },
-		planContract,
-		{ role: "user", content: "B" },
-		mock.sentMessages.at(-1)?.message,
-		{ role: "user", content: "Implement the plan." },
-	]);
-
-	assert.deepEqual(normal.activeTools, ["read", "bash", "edit", "write"]);
-	assert.deepEqual(plan.activeTools, [
-		"read",
-		"bash",
-		"edit",
-		"write",
-		"plan_mode_question",
-		"plan_mode_complete",
-	]);
-	assert.deepEqual(implementation.activeTools, plan.activeTools);
-	assert.notDeepEqual(plan.providerPayload.tools, normal.providerPayload.tools);
-	assert.deepEqual(implementation.providerPayload.tools, plan.providerPayload.tools);
-	assert.notDeepEqual(plan.activePromptMetadata, normal.activePromptMetadata);
-	assert.deepEqual(implementation.activePromptMetadata, plan.activePromptMetadata);
-	assert.equal(plan.systemPrompt, normal.systemPrompt);
-	assert.equal(implementation.systemPrompt, plan.systemPrompt);
+	const helperMetadata = normal.activePromptMetadata.filter((tool) =>
+		tool.name.startsWith("plan_mode_"),
+	);
+	assert.equal(helperMetadata.length, 2);
+	assert.ok(
+		helperMetadata.every(
+			(tool) => tool.promptSnippet === undefined && tool.promptGuidelines === undefined,
+		),
+	);
+	const helperDefinitions = normal.providerPayload.tools.filter((tool) =>
+		tool.name.startsWith("plan_mode_"),
+	);
+	assert.ok(
+		helperDefinitions.every((tool) =>
+			/tool visibility alone does not activate Plan mode/i.test(String(tool.description)),
+		),
+	);
+	assert.ok(
+		helperDefinitions.every((tool) => /writing-plans skill/i.test(String(tool.description))),
+	);
 });

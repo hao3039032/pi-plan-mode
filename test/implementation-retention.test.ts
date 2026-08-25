@@ -3,10 +3,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import { createMockContext, createMockPi } from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
 import type { ImplementationPlanRetention } from "../src/settings.js";
 import { restorePlanModeState } from "../src/state.js";
+import { createMockContext, createMockPi } from "./support.js";
 
 const PLAN = "# Retained plan\n\n1. Keep the complete handoff.";
 const STATE_ENTRY_TYPE = "plan-mode-state";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { createMockContext, createMockPi } from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
+import { createMockContext, createMockPi } from "./support.js";
 
 test("issue 302: history-only implementation stays ordinary context when Plan Mode restarts", async () => {
 	const mock = createMockPi({ activeTools: ["read", "bash", "custom"] });

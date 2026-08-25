@@ -3,13 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import {
-	builtinTool,
-	createMockContext,
-	createMockPi,
-	extensionTool,
-} from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
+import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
 test("active Plan mode enforces session-loaded safe subcommands", async () => {
 	await withAgentDir(async (agentDir) => {

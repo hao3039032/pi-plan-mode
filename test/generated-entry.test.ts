@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import { createMockContext, createMockPi } from "../../../test/support.js";
+import { createMockContext, createMockPi } from "./support.js";
 
 async function emit(
 	events: ReadonlyMap<string, Array<(...args: unknown[]) => unknown>>,

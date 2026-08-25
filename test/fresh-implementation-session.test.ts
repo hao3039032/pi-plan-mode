@@ -2,11 +2,6 @@ import assert from "node:assert/strict";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { test } from "vitest";
 import {
-	createCustomSelectorHarness,
-	createMockContext,
-	createMockPi,
-} from "../../../test/support.js";
-import {
 	formatImplementationHandoff,
 	formatTransferredPlanPrompt,
 	startFreshImplementationFromState,
@@ -14,6 +9,7 @@ import {
 } from "../src/fresh-implementation.js";
 import { showReadyPlanMenu } from "../src/plan-action-menus.js";
 import planMode from "../src/plan-mode.js";
+import { createCustomSelectorHarness, createMockContext, createMockPi } from "./support.js";
 
 const PLAN = `# Fresh implementation plan
 
@@ -385,7 +381,12 @@ test("fresh destination adopts setup state before kickoff for guaranteed-plan po
 			context.ctx,
 		);
 		assert.equal(context.statuses.get("plan-mode"), "plan implementing");
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
+		assert.deepEqual(mock.rawPi.getActiveTools(), [
+			"read",
+			"edit",
+			"plan_mode_question",
+			"plan_mode_complete",
+		]);
 
 		const firstContext = (await mock.events.get("context")?.[0]?.(
 			{ messages: [{ role: "user", content: handoff }] },

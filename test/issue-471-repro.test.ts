@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import {
-	createCustomSelectorHarness,
-	createMockContext,
-	createMockPi,
-} from "../../../test/support.js";
 import { PLAN_MODE_MAX_CHARS } from "../src/completion-tool.js";
 import planModeExtension from "../src/plan-mode.js";
 import { type ActiveImplementationPlan, restorePlanModeState } from "../src/state.js";
+import { createCustomSelectorHarness, createMockContext, createMockPi } from "./support.js";
 import { renderMockWidget } from "./widget-support.js";
 
 const PLAN = `# Compaction-safe implementation
@@ -572,7 +568,12 @@ test("shutdown cancellation cannot let a stale pre-start tool menu activate Plan
 	await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
 	await pendingMenu;
 
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"edit",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 	assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 
@@ -602,7 +603,12 @@ test("a state change while a pre-start tool menu is open cannot activate Plan mo
 	menuHarness.handleInput("tui.select.cancel");
 	await pendingMenu;
 
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"edit",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 	assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 

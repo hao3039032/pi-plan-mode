@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test } from "vitest";
-import { createMockContext, createMockPi } from "../../../test/support.js";
 import planMode, { normalizePlanModeQuestionParams } from "../src/plan-mode.js";
 import {
 	answerPlanModeQuestions,
@@ -9,6 +8,7 @@ import {
 	MAX_PLAN_MODE_RESPONSE_LENGTH,
 	type PlanModeQuestion,
 } from "../src/question-tool.js";
+import { createMockContext, createMockPi } from "./support.js";
 
 const questions: PlanModeQuestion[] = [
 	{

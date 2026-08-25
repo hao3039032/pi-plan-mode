@@ -3,13 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import {
-	builtinTool,
-	createMockContext,
-	createMockPi,
-	extensionTool,
-} from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
+import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
 const HELPERS = ["plan_mode_question", "plan_mode_complete"];
 
@@ -28,9 +23,8 @@ async function callTool(
 	return mock.events.get("tool_call")?.[0]?.({ toolName, input }, context.ctx);
 }
 
-test("lazy startup omits helpers, first activation appends them once, and later transitions stay stable", async () => {
-	const ordinaryTools = ["read", "bash", "edit", "write", "custom"];
-	const baseline = [...ordinaryTools, ...HELPERS];
+test("Plan lifecycle never mutates the stable helper-tool envelope", async () => {
+	const baseline = ["read", "bash", "edit", "write", "custom", ...HELPERS];
 	const mock = createMockPi({
 		activeTools: ["read", "bash", "edit", "write", "custom"],
 		allTools: [
@@ -51,74 +45,31 @@ test("lazy startup omits helpers, first activation appends them once, and later 
 	const context = createMockContext();
 
 	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-	assert.deepEqual(mock.rawPi.getActiveTools(), ordinaryTools);
-	assert.deepEqual(writes, []);
-
 	await mock.commands.get("plan")?.handler("start", context.ctx);
-	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
-	assert.deepEqual(writes, [baseline]);
 	await mock.commands.get("plan")?.handler("exit", context.ctx);
-	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
 	await mock.events.get("session_shutdown")?.[0]?.({ reason: "quit" }, context.ctx);
-	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
-	assert.deepEqual(writes, [baseline]);
 	await mock.events.get("session_start")?.[0]?.({ reason: "reload" }, context.ctx);
+
 	assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
-	assert.deepEqual(writes, [baseline]);
+	assert.deepEqual(writes, []);
 });
 
-test("always visibility appends helpers during session startup", async () => {
-	const mock = createMockPi({ activeTools: ["read"] });
-	planMode(mock.pi, {
-		readSettings: async () => ({
-			kind: "loaded" as const,
-			settings: { thinkingLevel: "inherit" as const, toolVisibility: "always" as const },
-		}),
-	});
-	const context = createMockContext();
-
-	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...HELPERS]);
-});
-
-test("watched visibility changes apply at safe idle boundaries", async () => {
-	await withAgentDir(async (agentDir) => {
-		const settingsPath = join(agentDir, "pi-plan-mode.json");
-		const mock = createMockPi({ activeTools: ["read", ...HELPERS] });
-		planMode(mock.pi, { settingsPath });
-		const context = createMockContext();
-		await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read"]);
-
-		await writeFile(settingsPath, '{"toolVisibility":"always"}\n');
-		await waitForTools(mock, ["read", ...HELPERS]);
-		await writeFile(settingsPath, '{"toolVisibility":"after-first-plan"}\n');
-		await waitForTools(mock, ["read"]);
-		await mock.events.get("session_shutdown")?.[0]?.({ reason: "quit" }, context.ctx);
-	});
-});
-
-test("busy watched lazy visibility defers narrowing until the next session boundary", async () => {
+test("watched retired visibility is ignored while remaining settings still reload", async () => {
 	await withAgentDir(async (agentDir) => {
 		const settingsPath = join(agentDir, "pi-plan-mode.json");
 		await writeFile(settingsPath, '{"toolVisibility":"always"}\n');
-		let idle = false;
-		const mock = createMockPi({ activeTools: ["read", ...HELPERS] });
+		const mock = createMockPi({ activeTools: ["read"] });
 		planMode(mock.pi, { settingsPath });
-		const context = createMockContext({ isIdle: () => idle });
+		const context = createMockContext({ isIdle: () => false });
 		await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...HELPERS]);
 
 		await writeFile(
 			settingsPath,
 			'{"toolVisibility":"after-first-plan","toggleShortcut":"ctrl+shift+p"}\n',
 		);
 		await waitForCondition(() => mock.shortcuts.has("ctrl+shift+p"));
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...HELPERS]);
 
-		idle = true;
-		await mock.events.get("session_start")?.[0]?.({ reason: "reload" }, context.ctx);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read"]);
+		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", ...HELPERS]);
 		await mock.events.get("session_shutdown")?.[0]?.({ reason: "quit" }, context.ctx);
 	});
 });
@@ -298,13 +249,6 @@ test("branch-restored selections constrain policy while helpers remain model-vis
 		true,
 	);
 });
-
-async function waitForTools(mock: ReturnType<typeof createMockPi>, expected: string[]) {
-	await waitForCondition(
-		() => JSON.stringify(mock.rawPi.getActiveTools()) === JSON.stringify(expected),
-	);
-	assert.deepEqual(mock.rawPi.getActiveTools(), expected);
-}
 
 async function waitForCondition(condition: () => boolean) {
 	const deadline = Date.now() + 2_000;

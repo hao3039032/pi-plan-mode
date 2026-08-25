@@ -1,11 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import {
-	builtinTool,
-	createMockContext,
-	createMockPi,
-	extensionTool,
-} from "../../../test/support.js";
 import planMode, {
 	canSelectToolInPlanMode,
 	classifyPlanModeTool,
@@ -17,6 +11,7 @@ import {
 	findBlockedPowerShellCommandSegment,
 	isSafePowerShellCommand,
 } from "../src/tool-policy.js";
+import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
 test("tool selection allows safe built-ins and non-built-ins only", () => {
 	type PlanTool = Parameters<typeof canSelectToolInPlanMode>[0];

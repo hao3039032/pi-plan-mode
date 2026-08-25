@@ -3,13 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import { createMockContext, createMockPi } from "../../../test/support.js";
 import planMode from "../src/plan-mode.js";
 import {
 	AGENT_WORKFLOW_GROUP,
 	WORKFLOW_MUTEX_CHANNEL,
 	WorkflowMutex,
 } from "../src/workflow-mutex.js";
+import { createMockContext, createMockPi } from "./support.js";
+
+const PLAN_HELPERS = ["plan_mode_question", "plan_mode_complete"];
 
 function attempt(session: object, group = AGENT_WORKFLOW_GROUP) {
 	return { session, group, busy: false };
@@ -257,7 +259,7 @@ test("busy restored activation does not widen the startup tool envelope", async 
 
 	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
 	assert.equal(activeToolWrites, 0);
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["goal_complete"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), ["goal_complete", ...PLAN_HELPERS]);
 	assert.equal(mock.thinkingLevel, "high");
 	assert.equal(mock.thinkingLevels.length, 0);
 	assert.equal(mock.entries.length, 0);
@@ -297,7 +299,7 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
 		assert.ok(launchOptions);
 		launchOptions.start(new AbortController().signal);
 		launchOptions.startWithTools(["read"], new AbortController().signal);
-		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
+		assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", ...PLAN_HELPERS]);
 		assert.equal(mock.entries.length, 0);
 		assert.equal(context.notifications.length, 2);
 	}
@@ -318,7 +320,7 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
 	});
 	await shortcutMock.events.get("session_start")?.[0]?.({ reason: "startup" }, shortcutContext.ctx);
 	await shortcutMock.shortcuts.get("ctrl+shift+p")?.handler(shortcutContext.ctx);
-	assert.deepEqual(shortcutMock.rawPi.getActiveTools(), ["read", "write"]);
+	assert.deepEqual(shortcutMock.rawPi.getActiveTools(), ["read", "write", ...PLAN_HELPERS]);
 	assert.equal(shortcutMock.entries.length, 0);
 	assert.match(shortcutContext.notifications.at(-1)?.message ?? "", /Another workflow/u);
 
@@ -356,7 +358,7 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
 	await activeMock.commands.get("plan")?.handler("", activeContext.ctx);
 	assert.ok(startNew);
 	startNew();
-	assert.deepEqual(activeMock.rawPi.getActiveTools(), ["read", "write"]);
+	assert.deepEqual(activeMock.rawPi.getActiveTools(), ["read", "write", ...PLAN_HELPERS]);
 	assert.equal(activeMock.entries.length, 0);
 	assert.deepEqual([...activeContext.statuses], statusSnapshot);
 });

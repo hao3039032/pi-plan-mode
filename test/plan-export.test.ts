@@ -4,12 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
-import {
-	createCustomSelectorHarness,
-	createMockContext,
-	createMockPi,
-} from "../../../test/support.js";
 import planMode, { completePlanArguments } from "../src/plan-mode.js";
+import { createCustomSelectorHarness, createMockContext, createMockPi } from "./support.js";
 
 const PLAN = "# Exported plan\n\n1. Keep the exact plan.\n2. Make it readable to the agent.";
 const STATE_ENTRY_TYPE = "plan-mode-state";

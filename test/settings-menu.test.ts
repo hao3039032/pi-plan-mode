@@ -52,7 +52,7 @@ function menuOptions(
 	};
 }
 
-test("Plan settings show six flat workflow rows without materializing a missing file", async () => {
+test("Plan settings show five flat workflow rows without materializing a missing file", async () => {
 	await withSettingsMenu(async ({ settingsPath, tui, ctx, saved }) => {
 		const running = showPlanModeSettings(ctx, menuOptions(settingsPath, saved));
 		await tui.waitForOpen();
@@ -63,7 +63,6 @@ test("Plan settings show six flat workflow rows without materializing a missing 
 		assert.match(frame, /Plan reinjection\s+Off — conversation history only/);
 		assert.match(frame, /Export destination\s+PLAN\.md/);
 		assert.match(frame, /Plan mode shortcut\s+none/);
-		assert.match(frame, /Plan tools\s+After first plan/);
 		assert.ok(tui.render(34).every((line) => visibleWidth(line) <= 34));
 		await assert.rejects(access(settingsPath));
 
@@ -88,27 +87,6 @@ test("Plan settings save thinking immediately for the next workflow", async () =
 		);
 		assert.equal(saved.at(-1)?.thinkingLevel, "off");
 		assert.match(tui.render().join("\n"), /Plan thinking\s+off/);
-		tui.press("ctrl+c");
-		await running;
-	});
-});
-
-test("Plan helper visibility saves immediately", async () => {
-	await withSettingsMenu(async ({ settingsPath, tui, ctx, saved }) => {
-		const running = showPlanModeSettings(ctx, menuOptions(settingsPath, saved));
-		await tui.waitForOpen();
-		for (let index = 0; index < 5; index += 1) tui.press("tui.select.down");
-		tui.press("tui.select.confirm");
-		await tui.waitForPending();
-		await tui.waitForOpen();
-
-		assert.equal(saved.at(-1)?.toolVisibility, "always");
-		assert.equal(
-			(JSON.parse(await readFile(settingsPath, "utf8")) as { toolVisibility?: string })
-				.toolVisibility,
-			"always",
-		);
-		assert.match(tui.render().join("\n"), /Plan tools\s+Always/);
 		tui.press("ctrl+c");
 		await running;
 	});
@@ -363,7 +341,6 @@ test("RPC Settings changes retention and export destination with the same flat n
 					"Plan reinjection (Off — conversation history only)",
 					"Export destination (PLAN.md)",
 					"Plan mode shortcut (none)",
-					"Plan tools (After first plan)",
 					"Back",
 				],
 				response: "Plan reinjection (Off — conversation history only)",
@@ -376,7 +353,6 @@ test("RPC Settings changes retention and export destination with the same flat n
 					"Plan reinjection (Through first implementation run)",
 					"Export destination (PLAN.md)",
 					"Plan mode shortcut (none)",
-					"Plan tools (After first plan)",
 					"Back",
 				],
 				response: "Export destination (PLAN.md)",
@@ -394,7 +370,6 @@ test("RPC Settings changes retention and export destination with the same flat n
 					"Plan reinjection (Through first implementation run)",
 					"Export destination (rpc/PLAN.md)",
 					"Plan mode shortcut (none)",
-					"Plan tools (After first plan)",
 					"Back",
 				],
 				response: undefined,
@@ -421,7 +396,6 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
 				"Plan reinjection (Off — conversation history only)",
 				"Export destination (PLAN.md)",
 				"Plan mode shortcut (none)",
-				"Plan tools (After first plan)",
 				"Back",
 			],
 			response: undefined,

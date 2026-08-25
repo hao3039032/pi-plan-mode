@@ -226,7 +226,7 @@ test("generated runtime is loadable by Pi's Jiti resource loader", async () => {
 		assert.ok(extension?.handlers.has("session_start"));
 		assert.ok(extension?.handlers.has("session_shutdown"));
 
-		let activeTools = ["read", "write"];
+		let activeTools = ["read", "write", "plan_mode_question", "plan_mode_complete"];
 		const sessionManager = {
 			getSessionId: () => "generated-plan-mode",
 			getSessionName: () => undefined,

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { builtinTool, createMockContext, createMockPi } from "../../../test/support.js";
 import { createModeContractMessage } from "../src/mode-contract.js";
 import planMode from "../src/plan-mode.js";
+import { builtinTool, createMockContext, createMockPi } from "./support.js";
 
 const PLAN = "# Branch-owned plan\n\n1. Restore this branch.";
 const BASELINE = ["read", "bash", "edit", "write", "plan_mode_question", "plan_mode_complete"];
@@ -100,7 +100,14 @@ test("manual tree navigation restores branch-owned mode state without changing t
 	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
 	const tree = mock.events.get("session_tree")?.[0];
 	assert.ok(tree);
-	assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "edit", "write"]);
+	assert.deepEqual(mock.rawPi.getActiveTools(), [
+		"read",
+		"bash",
+		"edit",
+		"write",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
 
 	branch.splice(
 		0,
