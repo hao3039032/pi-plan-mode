@@ -1,5 +1,11 @@
 # @narumitw/pi-plan-mode
 
+## 0.55.1
+
+### Patch Changes
+
+- b99b3db: Resolve explicitly selected tools registered before the first Plan request without mutating Pi's active tool schemas.
+
 ## 0.55.0
 
 ### Minor Changes
