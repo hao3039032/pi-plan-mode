@@ -1,5 +1,12 @@
 # @narumitw/pi-plan-mode
 
+## 0.55.2
+
+### Patch Changes
+
+- Updated dependencies [40182e5]
+  - @narumitw/pi-tui-kit@0.59.0
+
 ## 0.55.1
 
 ### Patch Changes
