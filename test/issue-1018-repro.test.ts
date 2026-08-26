@@ -112,6 +112,20 @@ test("unconfigured late custom tools remain denied", async () => {
 	assert.equal((await callTool(fixture, LATE_TOOL))?.block, true);
 });
 
+test("automatic defaults reject a late custom override while explicit intent allows it", async () => {
+	const automatic = await startPlan({});
+	automatic.allTools.splice(0, 1, extensionTool("read"));
+	await runBeforeAgentStart(automatic);
+	await runContext(automatic);
+	assert.equal((await callTool(automatic, "read"))?.block, true);
+
+	const explicit = await startPlan({ configured: ["read"] });
+	explicit.allTools.splice(0, 1, extensionTool("read"));
+	await runBeforeAgentStart(explicit);
+	await runContext(explicit);
+	assert.equal(await callTool(explicit, "read"), undefined);
+});
+
 test("configured inactive and metadata-free tools remain denied", async () => {
 	const inactive = await startPlan({
 		configured: [LATE_TOOL],
@@ -152,6 +166,108 @@ test("registration after first context waits for the next workflow", async () =>
 	await fixture.mock.commands.get("plan")?.handler("start", fixture.context.ctx);
 	await runContext(fixture);
 	assert.equal(await callTool(fixture, LATE_TOOL), undefined);
+});
+
+test("a resolved allowlist stays frozen when its active workflow is restored", async () => {
+	const fixture = await startPlan({ configured: [LATE_TOOL] });
+	await runContext(fixture);
+	const resolvedState = fixture.mock.entries.at(-1)?.data as
+		| {
+				workflowToolPolicy?: {
+					allowedNames?: string[];
+					resolved?: boolean;
+				};
+		  }
+		| undefined;
+	assert.equal(resolvedState?.workflowToolPolicy?.resolved, true);
+	assert.deepEqual(resolvedState?.workflowToolPolicy?.allowedNames, []);
+
+	registerLateTool(fixture);
+	const branch = fixture.mock.entries.map((entry) => ({ type: "custom", ...entry }));
+	const replacement = createMockContext({
+		sessionManager: {
+			getBranch: () => branch,
+			getEntries: () => branch,
+			getEntry: () => undefined,
+		},
+	});
+	await fixture.mock.events.get("session_start")?.[0]?.({ reason: "resume" }, replacement.ctx);
+	await fixture.mock.events.get("context")?.[0]?.({ messages: [] }, replacement.ctx);
+
+	const result = (await fixture.mock.events.get("tool_call")?.[0]?.(
+		{ toolName: LATE_TOOL, input: {} },
+		replacement.ctx,
+	)) as { block?: boolean } | undefined;
+	assert.equal(result?.block, true);
+});
+
+test("restoration revalidates a frozen allowed name after late registration", async () => {
+	const fixture = await startPlan({
+		configured: [LATE_TOOL],
+		activeTools: ["read", LATE_TOOL],
+		allTools: [builtinTool("read"), extensionTool(LATE_TOOL)],
+	});
+	await runContext(fixture);
+	const branch = fixture.mock.entries.map((entry) => ({ type: "custom", ...entry }));
+	fixture.allTools.splice(1, 1);
+	fixture.mock.rawPi.setActiveTools(["read", "plan_mode_question", "plan_mode_complete"]);
+	const replacement = createMockContext({
+		sessionManager: {
+			getBranch: () => branch,
+			getEntries: () => branch,
+			getEntry: () => undefined,
+		},
+	});
+	await fixture.mock.events.get("session_start")?.[0]?.({ reason: "resume" }, replacement.ctx);
+	fixture.allTools.push(extensionTool(LATE_TOOL));
+	fixture.mock.rawPi.setActiveTools([...fixture.mock.rawPi.getActiveTools(), LATE_TOOL]);
+	await fixture.mock.events.get("context")?.[0]?.({ messages: [] }, replacement.ctx);
+
+	assert.equal(
+		await fixture.mock.events.get("tool_call")?.[0]?.(
+			{ toolName: LATE_TOOL, input: {} },
+			replacement.ctx,
+		),
+		undefined,
+	);
+});
+
+test("malformed persisted workflow policy fails closed", async () => {
+	const stateEntry = {
+		type: "custom",
+		customType: "plan-mode-state",
+		data: {
+			enabled: true,
+			awaitingAction: false,
+			selectedToolNames: [LATE_TOOL],
+			workflowToolPolicy: {
+				kind: "explicit",
+				desiredNames: [LATE_TOOL],
+				allowedNames: [LATE_TOOL],
+				resolved: "yes",
+			},
+		},
+	};
+	const mock = createMockPi({
+		activeTools: ["read", LATE_TOOL],
+		allTools: [builtinTool("read"), extensionTool(LATE_TOOL)],
+	});
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const context = createMockContext({
+		sessionManager: {
+			getBranch: () => [stateEntry],
+			getEntries: () => [stateEntry],
+			getEntry: () => undefined,
+		},
+	});
+	await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+	await mock.events.get("context")?.[0]?.({ messages: [] }, context.ctx);
+
+	const result = (await mock.events.get("tool_call")?.[0]?.(
+		{ toolName: LATE_TOOL, input: {} },
+		context.ctx,
+	)) as { block?: boolean } | undefined;
+	assert.equal(result?.block, true);
 });
 
 test("session replacement discards pending intent from the replaced workflow", async () => {

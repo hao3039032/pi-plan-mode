@@ -27,6 +27,11 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 	type Screen = "main" | "tools" | "help";
 	type Action = "start" | "toggle-tool" | "start-with-tools" | "settings";
 	const selectedNames = new Set(options.getSelectedNames());
+	const toolItems = options.tools.map((tool, index) => ({
+		id: `plan-tool:${index}`,
+		tool,
+	}));
+	const toolsByItemId = new Map(toolItems.map(({ id, tool }) => [id, tool]));
 	let draftChanged = false;
 	const menu = defineMenu<undefined, Screen, Action, ExtensionContext>({
 		start: options.initialScreen ?? "main",
@@ -54,8 +59,8 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 				],
 				enableSearch: true,
 				viewportSize: 10,
-				items: options.tools.map((tool) => ({
-					id: tool.name,
+				items: toolItems.map(({ id, tool }) => ({
+					id,
 					label: tool.label ?? tool.name,
 					description: tool.description,
 					searchText: tool.searchText,
@@ -92,7 +97,7 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 			},
 			"toggle-tool": async ({ itemId, selected, signal }) => {
 				if (signal.aborted || !options.isCurrent()) return { kind: "rejected" };
-				const tool = options.tools.find((candidate) => candidate.name === itemId);
+				const tool = itemId ? toolsByItemId.get(itemId) : undefined;
 				if (!tool || tool.disabled) return { kind: "rejected" };
 				if (selected) selectedNames.add(tool.name);
 				else selectedNames.delete(tool.name);

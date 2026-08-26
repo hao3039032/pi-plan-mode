@@ -81,7 +81,12 @@ import {
 	type UpdatePlanModeSettingsOptions,
 	updatePlanModeSettings,
 } from "./settings.js";
-import { type PlanCompletionSource, type PlanModeState, restorePlanModeState } from "./state.js";
+import {
+	type PlanCompletionSource,
+	type PlanModeState,
+	type PlanModeWorkflowToolPolicy,
+	restorePlanModeState,
+} from "./state.js";
 import {
 	canSelectToolInPlanMode,
 	classifyPlanModeTool,
@@ -103,7 +108,7 @@ interface ReadyPresentationIntent {
 }
 interface PendingWorkflowToolPolicy {
 	generation: number;
-	desiredNames: string[];
+	mode: "resolve" | "revalidate";
 }
 type InteractiveUi = typeof import("./interactive-ui.js");
 
@@ -791,6 +796,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			awaitingAction: false,
 			savedPlan: undefined,
 			activeImplementation: undefined,
+			workflowToolPolicy: undefined,
 			manualThinkingLevel: undefined,
 		};
 		if (wasEnabled) {
@@ -941,6 +947,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			awaitingAction: false,
 			savedPlan: { plan, source },
 			activeImplementation: undefined,
+			workflowToolPolicy: undefined,
 			manualThinkingLevel: undefined,
 		};
 		restoreThinkingLevel();
@@ -987,8 +994,6 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
 		const previousState = state;
 		const previousIntent = readyPresentationIntent;
-		const previousWorkflowAllowedToolNames = workflowAllowedToolNames;
-		const previousPendingDesiredNames = pendingWorkflowToolPolicy?.desiredNames;
 		const wasEnabled = state.enabled;
 		if (!publishModeContract("normal", ctx)) return;
 		advanceWorkflowGeneration();
@@ -1012,6 +1017,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 						startedAt: Date.now(),
 						retention,
 					},
+			workflowToolPolicy: undefined,
 			manualThinkingLevel: undefined,
 		};
 		if (wasEnabled) {
@@ -1030,11 +1036,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		if (!sent) {
 			state = previousState;
 			readyPresentationIntent = previousIntent;
-			workflowAllowedToolNames = previousWorkflowAllowedToolNames;
-			pendingWorkflowToolPolicy = previousPendingDesiredNames
-				? { generation: workflowGeneration, desiredNames: [...previousPendingDesiredNames] }
-				: undefined;
 			if (wasEnabled) {
+				restoreWorkflowToolPolicy(state.workflowToolPolicy);
 				publishModeContract("plan", ctx);
 				applyPlanThinkingLevel();
 			}
@@ -1282,12 +1285,18 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	}
 
 	function beginWorkflowToolPolicy() {
+		const kind = toolPolicySelectionIsExplicit() ? "explicit" : "automatic";
 		const desiredNames = desiredPlanModeToolNames();
-		pendingWorkflowToolPolicy = {
-			generation: workflowGeneration,
-			desiredNames,
+		const allowedNames = resolvePlanModePolicyToolNames(desiredNames);
+		const policy: PlanModeWorkflowToolPolicy = {
+			kind,
+			...(kind === "explicit" ? { desiredNames } : {}),
+			allowedNames,
+			resolved: false,
 		};
-		workflowAllowedToolNames = resolvePlanModePolicyToolNames(desiredNames);
+		state = { ...state, workflowToolPolicy: policy };
+		pendingWorkflowToolPolicy = { generation: workflowGeneration, mode: "resolve" };
+		workflowAllowedToolNames = allowedNames;
 	}
 
 	function resolvePendingWorkflowToolPolicy(ctx: ExtensionContext) {
@@ -1301,14 +1310,103 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			pendingWorkflowToolPolicy = undefined;
 			return;
 		}
-		workflowAllowedToolNames = resolvePlanModePolicyToolNames(pending.desiredNames);
+		const policy = state.workflowToolPolicy;
+		const expectedResolved = pending.mode === "revalidate";
+		if (!policy || policy.resolved !== expectedResolved) {
+			pendingWorkflowToolPolicy = undefined;
+			return;
+		}
+		const allowedNames =
+			pending.mode === "resolve"
+				? resolveWorkflowToolPolicy(policy)
+				: revalidateFrozenWorkflowToolPolicy(policy);
+		const policyChanged = !policy.resolved || !arrayEquals(policy.allowedNames, allowedNames);
+		workflowAllowedToolNames = allowedNames;
+		state = {
+			...state,
+			workflowToolPolicy: { ...policy, allowedNames, resolved: true },
+		};
 		pendingWorkflowToolPolicy = undefined;
+		if (policyChanged) persistState();
 		updateUi(ctx);
+	}
+
+	function toolPolicySelectionIsExplicit() {
+		return (
+			state.selectedToolNames !== undefined ||
+			state.selectedToolKeys !== undefined ||
+			settings.defaultPlanTools !== undefined
+		);
 	}
 
 	function desiredPlanModeToolNames() {
 		const tools = activePlanPolicyTools();
 		return Array.from(snapshotPlanModeSelectedNames(tools, toolSelectionSnapshot()));
+	}
+
+	function automaticPlanModeToolNames() {
+		return Array.from(snapshotPlanModeSelectedNames(activePlanPolicyTools(), {}));
+	}
+
+	function resolveWorkflowToolPolicy(policy: PlanModeWorkflowToolPolicy) {
+		return resolvePlanModePolicyToolNames(
+			policy.kind === "automatic" ? automaticPlanModeToolNames() : (policy.desiredNames ?? []),
+		);
+	}
+
+	function revalidateFrozenWorkflowToolPolicy(policy: PlanModeWorkflowToolPolicy) {
+		const currentlyAllowed = new Set(
+			policy.kind === "automatic"
+				? resolvePlanModePolicyToolNames(automaticPlanModeToolNames())
+				: resolvePlanModePolicyToolNames(policy.allowedNames),
+		);
+		return policy.allowedNames.filter((name) => currentlyAllowed.has(name));
+	}
+
+	function restoreWorkflowToolPolicy(policy: PlanModeWorkflowToolPolicy | undefined) {
+		let nextPolicy: PlanModeWorkflowToolPolicy;
+		if (!policy) {
+			const kind = toolPolicySelectionIsExplicit() ? "explicit" : "automatic";
+			const desiredNames = desiredPlanModeToolNames();
+			nextPolicy = {
+				kind,
+				...(kind === "explicit" ? { desiredNames } : {}),
+				allowedNames: resolvePlanModePolicyToolNames(desiredNames),
+				resolved: true,
+			};
+		} else if (policy.resolved) {
+			nextPolicy = policy;
+		} else {
+			nextPolicy = {
+				...policy,
+				allowedNames: resolveWorkflowToolPolicy(policy),
+			};
+		}
+		state = { ...state, workflowToolPolicy: nextPolicy };
+		workflowAllowedToolNames = nextPolicy.resolved
+			? revalidateFrozenWorkflowToolPolicy(nextPolicy)
+			: nextPolicy.allowedNames;
+		pendingWorkflowToolPolicy = {
+			generation: workflowGeneration,
+			mode: nextPolicy.resolved ? "revalidate" : "resolve",
+		};
+		return !workflowToolPoliciesEqual(policy, nextPolicy);
+	}
+
+	function workflowToolPoliciesEqual(
+		left: PlanModeWorkflowToolPolicy | undefined,
+		right: PlanModeWorkflowToolPolicy,
+	) {
+		return (
+			left?.kind === right.kind &&
+			left.resolved === right.resolved &&
+			arrayEquals(left.allowedNames, right.allowedNames) &&
+			arrayEquals(left.desiredNames ?? [], right.desiredNames ?? [])
+		);
+	}
+
+	function arrayEquals(left: readonly string[], right: readonly string[]) {
+		return left.length === right.length && left.every((value, index) => value === right[index]);
 	}
 
 	function computePlanModePolicyToolNames() {
@@ -1446,11 +1544,14 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				restoreThinkingLevel();
 			}
 			state = candidate;
-			if (state.enabled) beginWorkflowToolPolicy();
-			else {
+			const policyChanged = state.enabled
+				? restoreWorkflowToolPolicy(state.workflowToolPolicy)
+				: false;
+			if (!state.enabled) {
 				workflowAllowedToolNames = undefined;
 				pendingWorkflowToolPolicy = undefined;
 			}
+			if (policyChanged) persistState();
 			if (state.enabled) applyPlanThinkingLevel();
 			else if (wasEnabled) releaseWorkflowOwner();
 			return true;

@@ -25,6 +25,13 @@ export interface SavedPlan {
 	source: PlanCompletionSource;
 }
 
+export interface PlanModeWorkflowToolPolicy {
+	kind: "automatic" | "explicit";
+	desiredNames?: string[];
+	allowedNames: string[];
+	resolved: boolean;
+}
+
 export interface PlanModeState {
 	enabled: boolean;
 	latestPlan?: string;
@@ -34,6 +41,7 @@ export interface PlanModeState {
 	activeImplementation?: ActiveImplementationPlan;
 	selectedToolNames?: string[];
 	selectedToolKeys?: string[];
+	workflowToolPolicy?: PlanModeWorkflowToolPolicy;
 	previousThinkingLevel?: PlanModeFixedThinkingLevel;
 	appliedThinkingLevel?: PlanModeFixedThinkingLevel;
 	manualThinkingLevel?: PlanModeFixedThinkingLevel;
@@ -86,12 +94,34 @@ export function restorePlanModeState(entries: unknown[], stateEntryType: string)
 		activeImplementation,
 		selectedToolNames: stringArray(entry.data.selectedToolNames),
 		selectedToolKeys: stringArray(entry.data.selectedToolKeys),
+		workflowToolPolicy: enabled
+			? normalizeWorkflowToolPolicy(entry.data.workflowToolPolicy)
+			: undefined,
 		previousThinkingLevel: enabled
 			? fixedThinkingLevel(entry.data.previousThinkingLevel)
 			: undefined,
 		appliedThinkingLevel: enabled ? fixedThinkingLevel(entry.data.appliedThinkingLevel) : undefined,
 		manualThinkingLevel: enabled ? fixedThinkingLevel(entry.data.manualThinkingLevel) : undefined,
 	};
+}
+
+function normalizeWorkflowToolPolicy(value: unknown): PlanModeWorkflowToolPolicy | undefined {
+	if (value === undefined) return undefined;
+	const denied: PlanModeWorkflowToolPolicy = {
+		kind: "automatic",
+		allowedNames: [],
+		resolved: true,
+	};
+	if (!isRecord(value)) return denied;
+	const kind = value.kind === "automatic" || value.kind === "explicit" ? value.kind : undefined;
+	const allowedNames = stringArray(value.allowedNames);
+	if (!kind || !allowedNames || typeof value.resolved !== "boolean") return denied;
+	if (kind === "automatic") {
+		return { kind, allowedNames, resolved: value.resolved };
+	}
+	const desiredNames = stringArray(value.desiredNames);
+	if (!desiredNames) return denied;
+	return { kind, desiredNames, allowedNames, resolved: value.resolved };
 }
 
 function normalizeSavedPlan(value: unknown): SavedPlan | undefined {

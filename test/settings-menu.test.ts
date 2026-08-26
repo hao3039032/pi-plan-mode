@@ -143,9 +143,9 @@ test("Default tools distinguish automatic, explicit empty, user risk, blocked ro
 	});
 });
 
-test("Default tools retain configured names that are unavailable in the current session", async () => {
+test("Default tools retain configured names without colliding with settings actions", async () => {
 	await withSettingsMenu(async ({ settingsPath, tui, ctx, saved }) => {
-		await writeFile(settingsPath, '{"defaultPlanTools":["missing-tool"]}\n');
+		await writeFile(settingsPath, '{"defaultPlanTools":["reset-tools"]}\n');
 		const running = showPlanModeSettings(ctx, menuOptions(settingsPath, saved));
 		await tui.waitForOpen();
 		tui.press("tui.select.down");
@@ -154,14 +154,14 @@ test("Default tools retain configured names that are unavailable in the current 
 		await tui.waitForOpen();
 		for (let index = 0; index < 3; index += 1) tui.press("tui.select.down");
 		const frame = tui.render().join("\n");
-		assert.match(frame, /missing-tool.*unavailable/is);
+		assert.match(frame, /reset-tools.*pending registration/is);
 		assert.match(frame, /Retained and resolved before the first request/i);
 		tui.press("ctrl+c");
 		await running;
 		assert.deepEqual(
 			(JSON.parse(await readFile(settingsPath, "utf8")) as { defaultPlanTools: string[] })
 				.defaultPlanTools,
-			["missing-tool"],
+			["reset-tools"],
 		);
 	});
 });

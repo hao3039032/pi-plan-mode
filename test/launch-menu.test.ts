@@ -414,7 +414,7 @@ test("launch picker retains and sanitizes configured names pending registration"
 			kind: "loaded" as const,
 			settings: {
 				thinkingLevel: "inherit" as const,
-				defaultPlanTools: [pendingName, oversizedName, "third", "fourth"],
+				defaultPlanTools: [pendingName, oversizedName, "start-with-tools", "fourth"],
 			},
 		}),
 	});
@@ -433,7 +433,10 @@ test("launch picker retains and sanitizes configured names pending registration"
 	rpc.assertConsumed();
 	const dialog = rpc.dialogs[0];
 	assert.ok(dialog);
-	assert.match(dialog.title, /Pending registration: late \[31m_tool, x+…, third, \+1 more/u);
+	assert.match(
+		dialog.title,
+		/Pending registration: late \[31m_tool, x+…, start-with-tools, \+1 more/u,
+	);
 	assert.ok(
 		(dialog.options ?? []).some(
 			(option) =>
@@ -442,6 +445,7 @@ test("launch picker retains and sanitizes configured names pending registration"
 	);
 	assert.equal(JSON.stringify(dialog).includes("\u001b"), false);
 	assert.equal(JSON.stringify(dialog).includes("x".repeat(200)), false);
+	assert.match(JSON.stringify(dialog), /start-with-tools/u);
 	assert.equal(mock.entries.length, 0);
 
 	const tui = createTuiHarness({ width: 34, rows: 18 });
