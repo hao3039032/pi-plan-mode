@@ -3,6 +3,7 @@ import { defineMenu, runMenu } from "@narumitw/pi-tui-kit";
 
 export interface PlanLaunchTool {
 	name: string;
+	label?: string;
 	description: string;
 	searchText: string;
 	disabled: boolean;
@@ -47,13 +48,15 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
 				title: "Choose Plan policy allowlist",
 				lines: [
 					"Policy changes apply only when you start Plan mode; first use may also reveal Plan helpers.",
-					"Only tools already active in Pi can be allowed; non-built-ins run at user risk.",
+					options.toolSummary(selectedNames),
+					"Active tools can be chosen now; retained names resolve before the first request.",
+					"Plan mode never activates tools, and non-built-ins run at user risk.",
 				],
 				enableSearch: true,
 				viewportSize: 10,
 				items: options.tools.map((tool) => ({
 					id: tool.name,
-					label: tool.name,
+					label: tool.label ?? tool.name,
 					description: tool.description,
 					searchText: tool.searchText,
 					selected: selectedNames.has(tool.name),

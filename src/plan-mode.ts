@@ -64,7 +64,6 @@ import {
 import {
 	assertPlanModeHelperToolsAvailable,
 	planModeHelperToolsAvailable,
-	withRequiredPlanModeTools,
 } from "./required-tools.js";
 import {
 	preflightSavedPlanImplementation,
@@ -90,12 +89,7 @@ import {
 	findBlockedPowerShellCommandSegment,
 	readCommand,
 } from "./tool-policy.js";
-import {
-	compareTools,
-	filterAvailableSelectedToolNames,
-	snapshotPlanModeSelectedNames,
-	toolPolicyLabel,
-} from "./tool-selection.js";
+import { compareTools, snapshotPlanModeSelectedNames, toolPolicyLabel } from "./tool-selection.js";
 import { WorkflowMutex, type WorkflowMutexOwner } from "./workflow-mutex.js";
 
 const STATE_ENTRY_TYPE = "plan-mode-state";
@@ -106,6 +100,10 @@ interface ReadyPresentationIntent {
 	nonce: number;
 	plan: string;
 	source: PlanCompletionSource;
+}
+interface PendingWorkflowToolPolicy {
+	generation: number;
+	desiredNames: string[];
 }
 type InteractiveUi = typeof import("./interactive-ui.js");
 
@@ -142,8 +140,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	let settings: PlanModeSettings = { thinkingLevel: "inherit" };
 	let toggleShortcut: ReturnType<typeof configuredPlanModeToggleShortcut>;
 	const clearPlanModeShortcutHandler = () => {};
-	let activeToolBaseline: string[] = [];
 	let workflowAllowedToolNames: string[] | undefined;
+	let pendingWorkflowToolPolicy: PendingWorkflowToolPolicy | undefined;
 	let publishedContractMode: PlanModeContract | undefined;
 	let modeContractsRelevant = false;
 	let readyPresentationIntent: ReadyPresentationIntent | undefined;
@@ -445,13 +443,13 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		currentSessionContext = ctx;
 		workflowOwner = undefined;
 		workflowMutex.bindSession(ctx.sessionManager);
-		captureToolBaseline();
 		refreshStateBeforeFirstAgentStart = event.reason === "new";
 		menuController.abort(new DOMException("Plan-mode session replaced", "AbortError"));
 		menuController = new AbortController();
 		readyPresentationIntent = undefined;
 		latestCommandContext = undefined;
 		workflowAllowedToolNames = undefined;
+		pendingWorkflowToolPolicy = undefined;
 		implementationRetention.reset();
 		settings = { thinkingLevel: "inherit" };
 		const branch = ctx.sessionManager.getBranch();
@@ -518,6 +516,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		readyPresentationIntent = undefined;
 		latestCommandContext = undefined;
 		refreshStateBeforeFirstAgentStart = false;
+		workflowAllowedToolNames = undefined;
+		pendingWorkflowToolPolicy = undefined;
 		implementationRetention.reset();
 		await awaitPlanModeSettingsWrites(dependencies.settingsPath);
 		if (currentSession !== undefined && currentSession !== shutdownSession) {
@@ -613,6 +613,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	});
 
 	pi.on("context", async (event, ctx) => {
+		resolvePendingWorkflowToolPolicy(ctx);
 		const result = implementationRetention.transformContext(event.messages, state);
 		if (result.clearActiveImplementationId) {
 			clearActiveImplementation(result.clearActiveImplementationId, ctx);
@@ -749,7 +750,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				selectedToolNames: candidate.selectedToolNames,
 				selectedToolKeys: candidate.selectedToolKeys,
 			};
-			workflowAllowedToolNames = computePlanModePolicyToolNames();
+			beginWorkflowToolPolicy();
 			applyPlanThinkingLevel();
 			persistState();
 			updateUi(ctx);
@@ -986,6 +987,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
 		const previousState = state;
 		const previousIntent = readyPresentationIntent;
+		const previousWorkflowAllowedToolNames = workflowAllowedToolNames;
+		const previousPendingDesiredNames = pendingWorkflowToolPolicy?.desiredNames;
 		const wasEnabled = state.enabled;
 		if (!publishModeContract("normal", ctx)) return;
 		advanceWorkflowGeneration();
@@ -1027,9 +1030,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		if (!sent) {
 			state = previousState;
 			readyPresentationIntent = previousIntent;
+			workflowAllowedToolNames = previousWorkflowAllowedToolNames;
+			pendingWorkflowToolPolicy = previousPendingDesiredNames
+				? { generation: workflowGeneration, desiredNames: [...previousPendingDesiredNames] }
+				: undefined;
 			if (wasEnabled) {
 				publishModeContract("plan", ctx);
-				workflowAllowedToolNames = computePlanModePolicyToolNames();
 				applyPlanThinkingLevel();
 			}
 			persistState();
@@ -1069,6 +1075,19 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		const ui = await loadInteractiveUi();
 		if (!lifecycle.isCurrent() || lifecycle.signal.aborted) return;
 		const tools = selectableTools();
+		const activeToolNames = new Set(safeGetActiveTools());
+		const initialSelectedNames = snapshotPlanModeSelectedNames(tools, toolSelectionSnapshot());
+		const retainsInactiveSelection =
+			state.selectedToolNames !== undefined ||
+			state.selectedToolKeys !== undefined ||
+			settings.defaultPlanTools !== undefined;
+		const retainedInactiveNames = retainsInactiveSelection
+			? initialSelectedNames
+			: new Set<string>();
+		const registeredNames = new Set(tools.map((tool) => tool.name));
+		const pendingNames = Array.from(retainedInactiveNames).filter(
+			(name) => !registeredNames.has(name),
+		);
 		await ui.showPlanLaunchMenu(ctx, {
 			statusText: planModeHelperToolsAvailable(safeGetActiveTools())
 				? "Status: Off — visible Plan helpers stay inactive until /plan starts."
@@ -1079,30 +1098,65 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				const allowed = tools
 					.filter(
 						(tool) =>
-							toolIsActive(tool.name) &&
+							activeToolNames.has(tool.name) &&
 							selectedNames.has(tool.name) &&
 							canSelectToolInPlanMode(tool),
 					)
 					.map((tool) => tool.name);
-				return `Plan policy will allow: ${allowed.length > 0 ? allowed.join(", ") : "none"}.`;
+				const pending = pendingNames
+					.filter((name) => selectedNames.has(name))
+					.map(terminalToolName);
+				const visiblePending = pending.slice(0, 3);
+				const pendingSuffix =
+					pending.length > visiblePending.length
+						? `, +${pending.length - visiblePending.length} more`
+						: "";
+				return [
+					`Plan policy will allow: ${allowed.length > 0 ? allowed.join(", ") : "none"}.`,
+					...(pending.length > 0
+						? [`Pending registration: ${visiblePending.join(", ")}${pendingSuffix}.`]
+						: []),
+				].join(" ");
 			},
-			tools: tools.map((tool) => {
-				const selectable = canSelectToolInPlanMode(tool);
-				const active = toolIsActive(tool.name);
-				const policy = active ? toolPolicyLabel(tool) : "not active in this Pi session";
-				const description = tool.description ?? "No description available";
-				return {
-					name: tool.name,
-					description: `${policy} · ${description}`,
-					searchText: [policy, description].join(" "),
-					disabled: !selectable || !active,
-					disabledReason: !active
-						? "Not active in Pi; Plan mode will not activate it"
-						: selectable
-							? undefined
-							: "Blocked by Plan-mode policy",
-				};
-			}),
+			tools: [
+				...tools.map((tool) => {
+					const selectable = canSelectToolInPlanMode(tool);
+					const active = activeToolNames.has(tool.name);
+					const retained = retainedInactiveNames.has(tool.name);
+					const policy = active
+						? toolPolicyLabel(tool)
+						: retained
+							? "not active yet; retained for first-request resolution"
+							: "not active in this Pi session";
+					const description = tool.description ?? "No description available";
+					return {
+						name: tool.name,
+						description: `${policy} · ${description}`,
+						searchText: [policy, description].join(" "),
+						disabled: !selectable || !active,
+						disabledReason: !active
+							? retained
+								? "Not active yet; retained and resolved before the first request"
+								: "Not active in Pi; Plan mode will not activate it"
+							: selectable
+								? undefined
+								: "Blocked by Plan-mode policy",
+					};
+				}),
+				...pendingNames.map((name) => {
+					const label = terminalToolName(name);
+					return {
+						name,
+						label,
+						description:
+							"pending registration · Retained and resolved before the first Plan request",
+						searchText: `${label} pending registration retained first Plan request`,
+						disabled: true,
+						disabledReason:
+							"Not registered yet; Plan mode will not activate it and will resolve it before the first request",
+					};
+				}),
+			],
 			...lifecycle,
 			start: (signal) => {
 				if (signal.aborted || !lifecycle.isCurrent()) return;
@@ -1115,7 +1169,11 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			},
 			startWithTools: (names, signal) => {
 				if (signal.aborted || !lifecycle.isCurrent()) return;
-				const selectedToolNames = filterAvailableSelectedToolNames(names, activePlanPolicyTools());
+				const selectedToolNames = Array.from(
+					new Set(
+						names.filter((name) => activeToolNames.has(name) || retainedInactiveNames.has(name)),
+					),
+				);
 				if (enterPlanMode(ctx, { selectedToolNames, selectedToolKeys: undefined })) {
 					ctx.ui.notify("Plan mode enabled with the selected tools.", "info");
 				}
@@ -1165,7 +1223,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		if (!isCurrent() || signal.aborted) return false;
 		const result = await ui.showPlanModeSettings(ctx, {
 			tools: selectableTools(),
-			activeToolNames: activeToolBaseline,
+			activeToolNames: safeGetActiveTools(),
 			signal,
 			isCurrent,
 			settingsPath: dependencies.settingsPath,
@@ -1192,6 +1250,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
 	function advanceWorkflowGeneration() {
 		workflowGeneration += 1;
+		pendingWorkflowToolPolicy = undefined;
 		finalizationRequest.reset();
 	}
 
@@ -1217,18 +1276,48 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		};
 	}
 
-	function captureToolBaseline() {
-		activeToolBaseline = withRequiredPlanModeTools(safeGetActiveTools());
+	function planModePolicyToolNames() {
+		if (state.enabled) return workflowAllowedToolNames ?? [];
+		return computePlanModePolicyToolNames();
 	}
 
-	function planModePolicyToolNames() {
-		return workflowAllowedToolNames ?? computePlanModePolicyToolNames();
+	function beginWorkflowToolPolicy() {
+		const desiredNames = desiredPlanModeToolNames();
+		pendingWorkflowToolPolicy = {
+			generation: workflowGeneration,
+			desiredNames,
+		};
+		workflowAllowedToolNames = resolvePlanModePolicyToolNames(desiredNames);
+	}
+
+	function resolvePendingWorkflowToolPolicy(ctx: ExtensionContext) {
+		const pending = pendingWorkflowToolPolicy;
+		if (!pending) return;
+		if (
+			pending.generation !== workflowGeneration ||
+			!state.enabled ||
+			!workflowMutex.isOwner(workflowOwner)
+		) {
+			pendingWorkflowToolPolicy = undefined;
+			return;
+		}
+		workflowAllowedToolNames = resolvePlanModePolicyToolNames(pending.desiredNames);
+		pendingWorkflowToolPolicy = undefined;
+		updateUi(ctx);
+	}
+
+	function desiredPlanModeToolNames() {
+		const tools = activePlanPolicyTools();
+		return Array.from(snapshotPlanModeSelectedNames(tools, toolSelectionSnapshot()));
 	}
 
 	function computePlanModePolicyToolNames() {
-		const tools = activePlanPolicyTools();
-		const selectedNames = snapshotPlanModeSelectedNames(tools, toolSelectionSnapshot());
-		return tools
+		return resolvePlanModePolicyToolNames(desiredPlanModeToolNames());
+	}
+
+	function resolvePlanModePolicyToolNames(desiredNames: readonly string[]) {
+		const selectedNames = new Set(desiredNames);
+		return activePlanPolicyTools()
 			.filter((tool) => selectedNames.has(tool.name) && canSelectToolInPlanMode(tool))
 			.map((tool) => tool.name);
 	}
@@ -1251,12 +1340,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	}
 
 	function activePlanPolicyTools() {
-		const activeNames = new Set(activeToolBaseline);
+		const activeNames = new Set(safeGetActiveTools());
 		return selectableTools().filter((tool) => activeNames.has(tool.name));
-	}
-
-	function toolIsActive(toolName: string) {
-		return activeToolBaseline.includes(toolName);
 	}
 
 	function safeGetAllTools() {
@@ -1325,6 +1410,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	function installRestoredState(candidate: PlanModeState, ctx: ExtensionContext) {
 		const previousState = state;
 		const previousWorkflowAllowedToolNames = workflowAllowedToolNames;
+		const previousPendingWorkflowToolPolicy = pendingWorkflowToolPolicy;
 		const previousOwner = workflowOwner;
 		const wasEnabled = state.enabled;
 		if (candidate.enabled && !workflowMutex.isOwner(workflowOwner)) {
@@ -1332,6 +1418,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			if (!owner) {
 				state = { enabled: false, awaitingAction: false };
 				workflowAllowedToolNames = undefined;
+				pendingWorkflowToolPolicy = undefined;
 				reportRestoredWorkflowBusy(ctx);
 				return false;
 			}
@@ -1345,6 +1432,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				} catch {
 					state = { enabled: false, awaitingAction: false };
 					workflowAllowedToolNames = undefined;
+					pendingWorkflowToolPolicy = undefined;
 					if (workflowOwner !== previousOwner) {
 						workflowMutex.release(workflowOwner);
 						workflowOwner = previousOwner;
@@ -1358,7 +1446,11 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				restoreThinkingLevel();
 			}
 			state = candidate;
-			workflowAllowedToolNames = state.enabled ? computePlanModePolicyToolNames() : undefined;
+			if (state.enabled) beginWorkflowToolPolicy();
+			else {
+				workflowAllowedToolNames = undefined;
+				pendingWorkflowToolPolicy = undefined;
+			}
 			if (state.enabled) applyPlanThinkingLevel();
 			else if (wasEnabled) releaseWorkflowOwner();
 			return true;
@@ -1368,6 +1460,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			} finally {
 				state = previousState;
 				workflowAllowedToolNames = previousWorkflowAllowedToolNames;
+				pendingWorkflowToolPolicy = previousPendingWorkflowToolPolicy;
 				if (workflowOwner !== previousOwner) {
 					workflowMutex.release(workflowOwner);
 					workflowOwner = previousOwner;
@@ -1392,6 +1485,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		} finally {
 			state = previousState;
 			workflowAllowedToolNames = undefined;
+			pendingWorkflowToolPolicy = undefined;
 			try {
 				persistState();
 				updateUi(ctx);
@@ -1471,6 +1565,11 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
 	function toolByName(toolName: string) {
 		return safeGetAllTools().find((candidate) => candidate.name === toolName);
+	}
+
+	function terminalToolName(value: string) {
+		const safe = safeTerminalText(value) || "(unnamed tool)";
+		return safe.length > 120 ? `${safe.slice(0, 119)}…` : safe;
 	}
 
 	function safeTerminalText(value: string) {

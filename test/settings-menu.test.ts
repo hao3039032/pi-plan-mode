@@ -155,7 +155,7 @@ test("Default tools retain configured names that are unavailable in the current 
 		for (let index = 0; index < 3; index += 1) tui.press("tui.select.down");
 		const frame = tui.render().join("\n");
 		assert.match(frame, /missing-tool.*unavailable/is);
-		assert.match(frame, /Retained in settings/i);
+		assert.match(frame, /Retained and resolved before the first request/i);
 		tui.press("ctrl+c");
 		await running;
 		assert.deepEqual(

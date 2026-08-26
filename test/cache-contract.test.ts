@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import planMode from "../src/plan-mode.js";
-import { builtinTool, createMockContext, createMockPi } from "./support.js";
+import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
 interface CapturedRequest {
 	phase: "normal" | "plan" | "implementation";
@@ -75,6 +75,43 @@ async function completePlan(mock: ReturnType<typeof createMockPi>, ctx: unknown)
 	assert.ok(complete);
 	await complete("complete", { plan: "# Cache-stable plan" }, undefined, undefined, ctx);
 }
+
+test("first-context policy resolution does not mutate late active tool schemas", async () => {
+	const allTools = [builtinTool("read")];
+	const mock = createMockPi({ activeTools: ["read"], allTools });
+	const activeToolWrites: string[][] = [];
+	const setActiveTools = mock.rawPi.setActiveTools.bind(mock.rawPi);
+	mock.rawPi.setActiveTools = (names) => {
+		activeToolWrites.push([...names]);
+		setActiveTools(names);
+	};
+	planMode(mock.pi, {
+		readSettings: async () => ({
+			kind: "loaded" as const,
+			settings: { thinkingLevel: "inherit" as const, defaultPlanTools: ["late_tool"] },
+		}),
+	});
+	const context = createMockContext();
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	await mock.commands.get("plan")?.handler("start", context.ctx);
+	allTools.push(extensionTool("late_tool"));
+	setActiveTools([...mock.rawPi.getActiveTools(), "late_tool"]);
+	const activeBeforeContext = mock.rawPi.getActiveTools();
+	const definitionsBeforeContext = activeBeforeContext.map((name) => {
+		const tool = [...allTools, ...mock.tools].find((candidate) => candidate.name === name) as
+			| Record<string, unknown>
+			| undefined;
+		return { name, description: tool?.description, parameters: tool?.parameters };
+	});
+
+	const request = await captureRequest("plan", mock, context.ctx, [
+		{ role: "user", content: "Inspect with the late tool" },
+	]);
+
+	assert.deepEqual(request.activeTools, activeBeforeContext);
+	assert.deepEqual(request.providerPayload.tools, definitionsBeforeContext);
+	assert.deepEqual(activeToolWrites, []);
+});
 
 test("stable Plan helper schema keeps request fields and inactive metadata safe", async () => {
 	const allTools = [

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { createRpcHarness, createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test } from "vitest";
 import planMode from "../src/plan-mode.js";
@@ -184,6 +185,38 @@ test("the inactive launch menu opens Settings without starting Plan mode", async
 	await settleWithin(running, "launch Settings close");
 });
 
+test("Plan Settings uses live active tools registered after session start", async () => {
+	const allTools = [builtinTool("read")];
+	const mock = createMockPi({ activeTools: ["read"], allTools });
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const tui = createTuiHarness();
+	const context = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	allTools.push(extensionTool("late_tool"));
+	mock.rawPi.setActiveTools([...mock.rawPi.getActiveTools(), "late_tool"]);
+
+	const running = mock.commands.get("plan")?.handler("", context.ctx) as Promise<unknown>;
+	await waitForOpenCount(tui, 1, running);
+	tui.press("tui.select.down");
+	tui.press("tui.select.down");
+	tui.press("tui.select.confirm");
+	await settleWithin(tui.waitForPending(), "the live Settings transition");
+	await waitForOpenCount(tui, 2, running);
+	tui.press("tui.select.down");
+	tui.press("tui.select.confirm");
+	await settleWithin(tui.waitForPending(), "the live tool Settings transition");
+	await waitForOpenCount(tui, 3, running);
+	tui.press("tui.select.down");
+	const frame = tui.render().join("\n");
+	assert.match(frame, /late_tool/u);
+	assert.match(frame, /user opt-in/u);
+	assert.doesNotMatch(frame, /late_tool.*not active/is);
+
+	tui.press("ctrl+c");
+	await running;
+	tui.dispose();
+});
+
 test("persisted Settings become the baseline for the next Plan workflow", async () => {
 	const agentDir = await mkdtemp(join(tmpdir(), "pi-plan-mode-launch-settings-"));
 	const settingsPath = join(agentDir, "pi-plan-mode.json");
@@ -341,6 +374,85 @@ test("RPC stages tool changes until the explicit start action", async () => {
 	rpc.assertConsumed();
 	assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
 	assert.equal(mock.sentUserMessages.length, 0);
+});
+
+test("reopened launch picker uses live active tools registered after session start", async () => {
+	const allTools = [builtinTool("read")];
+	const mock = createMockPi({ activeTools: ["read"], allTools });
+	planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+	const rpc = createRpcHarness([{ kind: "select", response: "Back" }]);
+	const context = createMockContext({
+		mode: "rpc",
+		hasUI: true,
+		select: rpc.ui.select,
+		input: rpc.ui.input,
+		custom: rpc.ui.custom,
+	});
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+	allTools.push(extensionTool("late_tool"));
+	mock.rawPi.setActiveTools([...mock.rawPi.getActiveTools(), "late_tool"]);
+	const activeBefore = mock.rawPi.getActiveTools();
+
+	await mock.commands.get("plan")?.handler("tools", context.ctx);
+
+	rpc.assertConsumed();
+	const options = rpc.dialogs[0]?.options ?? [];
+	assert.ok(options.includes("[ ] late_tool"));
+	assert.ok(
+		options.every((option) => !/late_tool.*Not active in Pi|late_tool.*unavailable/iu.test(option)),
+	);
+	assert.deepEqual(mock.rawPi.getActiveTools(), activeBefore);
+	assert.equal(mock.entries.length, 0);
+});
+
+test("launch picker retains and sanitizes configured names pending registration", async () => {
+	const pendingName = "late\u001b[31m_tool";
+	const oversizedName = "x".repeat(500);
+	const mock = createMockPi({ activeTools: ["read"], allTools: [builtinTool("read")] });
+	planMode(mock.pi, {
+		readSettings: async () => ({
+			kind: "loaded" as const,
+			settings: {
+				thinkingLevel: "inherit" as const,
+				defaultPlanTools: [pendingName, oversizedName, "third", "fourth"],
+			},
+		}),
+	});
+	const rpc = createRpcHarness([{ kind: "select", response: "Back" }]);
+	const context = createMockContext({
+		mode: "rpc",
+		hasUI: true,
+		select: rpc.ui.select,
+		input: rpc.ui.input,
+		custom: rpc.ui.custom,
+	});
+	await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+
+	await mock.commands.get("plan")?.handler("tools", context.ctx);
+
+	rpc.assertConsumed();
+	const dialog = rpc.dialogs[0];
+	assert.ok(dialog);
+	assert.match(dialog.title, /Pending registration: late \[31m_tool, x+…, third, \+1 more/u);
+	assert.ok(
+		(dialog.options ?? []).some(
+			(option) =>
+				/late \[31m_tool.*Not registered yet/iu.test(option) && !option.includes("\u001b"),
+		),
+	);
+	assert.equal(JSON.stringify(dialog).includes("\u001b"), false);
+	assert.equal(JSON.stringify(dialog).includes("x".repeat(200)), false);
+	assert.equal(mock.entries.length, 0);
+
+	const tui = createTuiHarness({ width: 34, rows: 18 });
+	const tuiContext = createMockContext({ mode: "tui", hasUI: true, custom: tui.custom });
+	const running = mock.commands.get("plan")?.handler("tools", tuiContext.ctx) as Promise<unknown>;
+	await waitForOpenCount(tui, 1, running);
+	assert.ok(tui.render().every((line) => visibleWidth(line) <= 34));
+	tui.press("ctrl+c");
+	await running;
+	tui.dispose();
+	assert.equal(mock.entries.length, 0);
 });
 
 test("Ctrl+C and external disposal discard the inactive launch interaction", async () => {

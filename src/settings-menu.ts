@@ -111,7 +111,7 @@ export async function showPlanModeSettings(
 									id: "defaultPlanTools",
 									label: "Plan policy tools",
 									description:
-										"Choose which already-active tools Plan mode may execute by default.",
+										"Choose active tools or retain names to resolve before the first request.",
 									currentValue: defaultToolsValue(state.settings.defaultPlanTools),
 									action: "open-tools",
 								},
@@ -147,7 +147,8 @@ export async function showPlanModeSettings(
 				title: "Default Plan policy allowlist",
 				lines: [
 					"Changes apply when a later Plan workflow starts; model-visible tools stay unchanged.",
-					"Only tools already active in Pi can be allowed; non-built-ins run at user risk.",
+					"Retained inactive names resolve before that workflow's first request.",
+					"Plan mode never activates tools, and non-built-ins run at user risk.",
 				],
 				enableSearch: true,
 				viewportSize: 10,
@@ -355,7 +356,11 @@ function defaultToolItems(
 	const items = tools.map((tool) => {
 		const active = activeToolNames.has(tool.name);
 		const selectable = active && canSelectToolInPlanMode(tool);
-		const policy = active ? toolPolicyLabel(tool) : "not active in this Pi session";
+		const policy = active
+			? toolPolicyLabel(tool)
+			: selected.has(tool.name)
+				? "not active yet; retained for first-request resolution"
+				: "not active in this Pi session";
 		const description = tool.description ?? "No description available";
 		return {
 			id: tool.name,
@@ -365,7 +370,9 @@ function defaultToolItems(
 			selected: selected.has(tool.name),
 			disabled: !selectable,
 			disabledReason: !active
-				? "Not active in Pi; Plan mode will not activate it"
+				? selected.has(tool.name)
+					? "Not active yet; retained and resolved before the first request"
+					: "Not active in Pi; Plan mode will not activate it"
 				: selectable
 					? undefined
 					: "Blocked by Plan-mode policy",
@@ -373,14 +380,15 @@ function defaultToolItems(
 	});
 	for (const name of configured ?? []) {
 		if (availableNames.has(name)) continue;
+		const label = terminalToolName(name);
 		items.push({
 			id: name,
-			label: name,
-			description: "unavailable · Retained in settings but unavailable in this session",
-			searchText: "unavailable retained settings",
+			label,
+			description: "pending registration · Retained and resolved before the first request",
+			searchText: `${label} pending registration retained settings first request`,
 			selected: true,
 			disabled: true,
-			disabledReason: "Unavailable in this session; reset defaults to remove unavailable names",
+			disabledReason: "Not registered yet; reset defaults to remove retained names",
 		});
 	}
 	return items;
@@ -390,6 +398,11 @@ function explicitToolNames(tools: readonly ToolInfo[], configured: string[] | un
 	return configured === undefined
 		? defaultPlanModeToolNames([...tools], undefined)
 		: [...configured];
+}
+
+function terminalToolName(value: string) {
+	const safe = safeTerminalText(value) || "(unnamed tool)";
+	return safe.length > 120 ? `${safe.slice(0, 119)}…` : safe;
 }
 
 function safeTerminalText(value: string) {

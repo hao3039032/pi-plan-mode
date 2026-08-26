@@ -97,7 +97,9 @@ The extension does not register a startup flag; run `/plan start` after launch f
 
 Use **Choose tools, then start…** or the `/plan tools` compatibility shortcut to choose a session-specific Plan policy override before Planning starts.
 Both routes use the same draft selector: **Done — start with this policy** stores the allowlist and starts the workflow, while cancellation leaves Plan mode off and changes nothing.
-The bounded multi-select shows 10 rows at a time, supports viewport paging, descriptions, and explicit unavailable rows for blocked or currently inactive tools.
+The bounded multi-select shows 10 rows at a time, supports viewport paging, descriptions, and explicit unavailable rows for blocked, currently inactive, or configured but not-yet-registered tools.
+Configured or previously selected names without current metadata appear as pending registration and remain selected for first-request resolution.
+Reopen the picker to refresh tools registered while it was closed because Pi exposes no live tool-registration event.
 In TUI mode, type to fuzzy-search tool names, descriptions, policy, and source metadata; RPC keeps the complete unfiltered list.
 Once Plan mode is active, tools are locked: `/plan` no longer offers tool or Settings actions, and `/plan tools` rejects the request.
 Exit and start a new workflow if a different tool set is required.
@@ -141,10 +143,10 @@ Configure persistent defaults or a one-workflow tool override before activation;
 Plan mode registers `plan_mode_question` and `plan_mode_complete` during extension load and never changes their active status itself.
 Another active-tool policy may hide them, in which case Plan start or restore fails without widening that policy.
 By default, the Plan policy allows active safe built-ins such as `read`, limited `bash`, limited `powershell`, `grep`, `find`, and `ls`.
-The optional native `powershell` tool must already be active, for example through Pi's Windows `defaultTools` setting, before Plan mode can select it.
-Built-in `edit` and `write`, `update_plan`, inactive tools, and deselected tools are blocked at execution time even though active schemas remain visible.
-Extension and custom tools are denied by default because Pi tools do not expose standardized mutability metadata; allow an already active custom tool before starting only when you accept the risk.
-For example, you can opt into an active `firecrawl_scrape`, `firecrawl_search`, or `lsp_diagnostics` tool when you want to use it during planning.
+The optional native `powershell` tool must be active when an automatic Plan policy starts, for example through Pi's Windows `defaultTools` setting, unless its name was explicitly retained for first-request resolution.
+Built-in `edit` and `write`, `update_plan`, tools still inactive at the first request, and deselected tools are blocked at execution time even though active schemas remain visible.
+Extension and custom tools are denied by default because Pi tools do not expose standardized mutability metadata; explicitly allow a custom-tool name before starting only when you accept the risk.
+For example, you can opt into `firecrawl_scrape`, `firecrawl_search`, or `lsp_diagnostics` when you want to use the effective active tool during planning.
 After they become visible, the Plan-only helpers remain visible in Normal mode, but their handlers and the `tool_call` policy reject calls unless Plan mode owns the active workflow.
 
 Limited `bash` uses a fail-closed Bash policy, including when an extension overrides the canonical `bash` tool name.
@@ -177,7 +179,8 @@ If you cancel or no interactive UI is available, the agent should ask a concise 
 
 Pi identifies tools by tool name.
 The pre-start selector stores accepted session policy names and shows each effective tool's source from Pi metadata, such as `built-in`, a user extension path, or a project extension path.
-A selected name can run in Plan mode only when that effective tool was already active at session startup.
+A selected name can run in Plan mode only when Pi has registered and activated the effective selectable tool by that workflow's first provider-bound context.
+The allowlist freezes at that boundary, so a tool registered or activated later waits for the next Plan workflow.
 If an extension overrides a built-in tool with the same name, Pi exposes the effective tool for that name and the selector shows that source.
 
 A complete Plan mode answer should appear only after the agent has resolved discoverable facts and high-impact user decisions.
@@ -342,9 +345,11 @@ An explicit empty array appears as **No optional tools** and denies every ordina
 Neither setting changes model-visible tool schemas.
 
 Tool names must be non-empty strings; duplicates are removed in first-seen order.
-Unknown, inactive, and Plan-mode-blocked names are unavailable to the policy and never become active merely by entering Plan mode.
-Settings retains configured inactive names and shows them as unavailable; resetting to automatic removes the entire override.
-An ordinary tool registered or activated after the startup baseline is outside the current workflow policy; start a later session to include it in the selectable baseline.
+Explicit configured or session-selected names remain policy intent when their tool is unknown or inactive, but Plan mode never registers or activates them.
+The inactive menu takes a fresh registered and active tool snapshot each time it opens, while an already open picker does not update in place.
+At the workflow's first provider-bound context, after every `before_agent_start` handler has settled, Plan mode resolves retained names against Pi's live registered and active tools and freezes the executable allowlist.
+Unknown, inactive, and Plan-mode-blocked names remain unavailable after that resolution, and a later registration or activation waits for the next Plan workflow rather than a new session.
+Settings shows unresolved names as pending registration; resetting to automatic removes the entire override.
 Non-built-in names in this global setting are an explicit user-risk opt-in, just like selecting them in the pre-start workflow selector.
 Plan mode does not interpret a selected custom tool's arguments or actions: allowing one trusts the whole effective tool.
 Pi resolves tools by name, so if an extension overrides a built-in name, the effective extension tool is selected instead.

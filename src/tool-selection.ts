@@ -44,9 +44,7 @@ export function filterAvailableSelectedToolNames(names: string[], tools: ToolInf
 }
 
 export function defaultPlanModeToolNames(tools: ToolInfo[], configuredNames: string[] | undefined) {
-	if (configuredNames !== undefined) {
-		return filterAvailableSelectedToolNames(configuredNames, tools);
-	}
+	if (configuredNames !== undefined) return unique(configuredNames);
 	return tools
 		.filter((tool) => isBuiltinTool(tool) && SAFE_BUILTIN_PLAN_TOOLS.has(tool.name))
 		.map((tool) => tool.name);
@@ -70,6 +68,6 @@ export function snapshotPlanModeSelectedNames(
 	return new Set(
 		selectedToolNames === undefined
 			? defaultPlanModeToolNames(tools, selection.defaultPlanTools)
-			: filterAvailableSelectedToolNames(selectedToolNames, tools),
+			: unique(selectedToolNames),
 	);
 }
