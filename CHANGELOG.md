@@ -1,5 +1,11 @@
 # @narumitw/pi-plan-mode
 
+## 0.55.3
+
+### Patch Changes
+
+- 14068d2: Allow reviewed Git inspections to use current-working-directory `git -C <path>` forms, and report actionable reasons when Plan mode denies an unavailable, inactive, frozen, blocked, or unselected tool.
+
 ## 0.55.2
 
 ### Patch Changes
