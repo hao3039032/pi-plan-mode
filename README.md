@@ -153,8 +153,10 @@ After they become visible, the Plan-only helpers remain visible in Normal mode, 
 
 Limited `bash` uses a fail-closed Bash policy, including when an extension overrides the canonical `bash` tool name.
 It accepts common inspection commands, read-only Git and npm queries, pipelines and command lists composed entirely of accepted commands, plus selected checks such as `npm test`, `npm run typecheck`, and `cargo test`.
-Reviewed Git inspections may place `--no-pager` and one or more complete `-C <path>` pairs before the accepted subcommand.
-It rejects output/input redirects, shell expansion, substitutions, subshells, background jobs, incomplete `-C` pairs, other Git global options, mutating flags, dependency changes, editors, and unknown commands.
+Reviewed Git inspections may place `--no-pager` before the accepted subcommand.
+They may also place one or more complete `-C <path>` pairs before the accepted subcommand only when `-c core.fsmonitor=false` is also provided before the subcommand.
+This prevents the target repository's `core.fsmonitor` configuration from running a configured helper during inspection.
+It rejects output/input redirects, shell expansion, substitutions, subshells, background jobs, incomplete `-C` pairs, other Git global options, unsafe Git config overrides, mutating flags, dependency changes, editors, and unknown commands.
 
 Limited `powershell` uses a separate fail-closed PowerShell policy, including when an extension overrides the canonical `powershell` tool name.
 It accepts canonical inspection cmdlets such as `Get-ChildItem`, `Get-Content`, `Get-Item`, `Get-Location`, `Resolve-Path`, `Select-String`, `Test-Path`, `Measure-Object`, `Sort-Object`, `Format-List`, `Format-Table`, `Out-String`, and `Write-Output`.

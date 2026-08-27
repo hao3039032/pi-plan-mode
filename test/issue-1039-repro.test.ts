@@ -101,17 +101,17 @@ test("issue 1039: denied tools report inactive, unavailable, and blocked policy 
 	});
 });
 
-test("issue 1039: reviewed git -C inspections work in Bash and PowerShell policies", async () => {
+test("issue 1039: reviewed git -C inspections work with fsmonitor disabled", async () => {
 	for (const command of [
-		"git -C /tmp/repository status --short",
-		"git --no-pager -C /tmp/repository log -1 --oneline",
-		"git -C packages -C pi-plan-mode diff --check",
-		"git -C packages --no-pager status --short",
+		"git -c core.fsmonitor=false -C /tmp/repository status --short",
+		"git --no-pager -c core.fsmonitor=false -C /tmp/repository log -1 --oneline",
+		"git -c core.fsmonitor=false -C packages -C pi-plan-mode diff --check",
+		"git -C packages --no-pager -c core.fsmonitor=false status --short",
 	]) {
 		assert.equal(isSafeCommand(command), true, `Bash: ${command}`);
 		assert.equal(isSafePowerShellCommand(command), true, `PowerShell: ${command}`);
 	}
-	const configured = "git -C /tmp/repository rev-parse --show-toplevel";
+	const configured = "git -c core.fsmonitor=false -C /tmp/repository rev-parse --show-toplevel";
 	assert.equal(isSafeCommand(configured), false);
 	assert.equal(isSafePowerShellCommand(configured), false);
 	assert.equal(isSafeCommand(configured, { git: ["rev-parse"] }), true);
@@ -123,13 +123,13 @@ test("issue 1039: reviewed git -C inspections work in Bash and PowerShell polici
 	});
 	assert.equal(
 		await callTool(fixture, "bash", {
-			command: "git -C /tmp/repository status --short",
+			command: "git -c core.fsmonitor=false -C /tmp/repository status --short",
 		}),
 		undefined,
 	);
 	assert.equal(
 		await callTool(fixture, "powershell", {
-			command: "git -C 'C:\\repository path' status --short",
+			command: "git -c core.fsmonitor=false -C 'C:\\repository path' status --short",
 		}),
 		undefined,
 	);
@@ -139,11 +139,14 @@ test("issue 1039: git -C remains fail-closed for malformed and unsafe commands",
 	for (const command of [
 		"git -C",
 		"git -C --no-pager status",
-		"git -C /tmp/repository checkout main",
-		"git -C /tmp/repository clean -fd",
-		"git -C /tmp/repository --exec-path=/tmp status",
-		"git -C /tmp/repository diff --ext-diff",
-		"git -C /tmp/repository log --show-signature -1",
+		"git -C /tmp/repository status --short",
+		"git -c core.fsmonitor=true -C /tmp/repository status --short",
+		"git -c alias.status=!touch -C /tmp/repository status",
+		"git -c core.fsmonitor=false -C /tmp/repository checkout main",
+		"git -c core.fsmonitor=false -C /tmp/repository clean -fd",
+		"git -c core.fsmonitor=false -C /tmp/repository --exec-path=/tmp status",
+		"git -c core.fsmonitor=false -C /tmp/repository diff --ext-diff",
+		"git -c core.fsmonitor=false -C /tmp/repository log --show-signature -1",
 		"git --git-dir=/tmp/repository status",
 	]) {
 		assert.equal(isSafeCommand(command), false, `Bash: ${command}`);

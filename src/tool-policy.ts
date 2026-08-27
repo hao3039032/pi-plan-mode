@@ -561,11 +561,11 @@ function isSafeStructuredCommand(
 }
 
 function isSafeGitCommand(args: string[], safeSubcommands: SafeSubcommands) {
-	const subcommandIndex = gitSubcommandIndex(args);
-	if (subcommandIndex === undefined) return false;
-	const subcommand = args[subcommandIndex]?.toLowerCase();
+	const globalOptions = parseGitGlobalOptions(args);
+	if (globalOptions === undefined) return false;
+	const subcommand = args[globalOptions.subcommandIndex]?.toLowerCase();
 	if (!subcommand || subcommand.startsWith("-")) return false;
-	const subcommandArgs = args.slice(subcommandIndex + 1);
+	const subcommandArgs = args.slice(globalOptions.subcommandIndex + 1);
 	const builtinValidator = (BUILTIN_GIT_VALIDATORS as Record<string, ArgumentValidator>)[
 		subcommand
 	];
@@ -576,25 +576,40 @@ function isSafeGitCommand(args: string[], safeSubcommands: SafeSubcommands) {
 	const validator = builtinValidator ?? (configured ? configuredValidator : undefined);
 	return (
 		validator !== undefined &&
+		(!globalOptions.usesDirectoryChange || globalOptions.disablesFsmonitor) &&
 		hasSafeGitArguments(subcommand, subcommandArgs) &&
 		validator(subcommandArgs)
 	);
 }
 
-function gitSubcommandIndex(args: string[]) {
+function parseGitGlobalOptions(args: string[]) {
 	let index = 0;
+	let usesDirectoryChange = false;
+	let disablesFsmonitor = false;
 	while (index < args.length) {
 		const argument = args[index];
 		if (argument === "--no-pager") {
 			index += 1;
 			continue;
 		}
+		if (argument === "-c") {
+			const config = args[index + 1];
+			if (!config || !isSafeGitConfigOverride(config)) return undefined;
+			disablesFsmonitor = true;
+			index += 2;
+			continue;
+		}
 		if (argument !== "-C") break;
 		const directory = args[index + 1];
 		if (!directory || directory.startsWith("-")) return undefined;
+		usesDirectoryChange = true;
 		index += 2;
 	}
-	return index;
+	return { subcommandIndex: index, usesDirectoryChange, disablesFsmonitor };
+}
+
+function isSafeGitConfigOverride(config: string) {
+	return config.toLowerCase() === "core.fsmonitor=false";
 }
 
 function hasSafeGitArguments(subcommand: string, args: string[]) {
