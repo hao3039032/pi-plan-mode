@@ -596,7 +596,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		if (!allowedToolNames.has(event.toolName)) {
 			return {
 				block: true,
-				reason: `Plan mode blocks tool '${event.toolName}' because it is not selected by the Plan policy. Exit Plan mode, then enable it with /plan tools or defaultPlanTools before starting again.`,
+				reason: workflowDesiredToolNames().has(event.toolName)
+					? `Plan mode blocks tool '${event.toolName}' because it was not available when the active Plan workflow froze its tool policy. Exit Plan mode, then start again after the tool is active.`
+					: `Plan mode blocks tool '${event.toolName}' because it is not selected by the Plan policy. Exit Plan mode, then enable it with /plan tools or defaultPlanTools before starting again.`,
 			};
 		}
 		if (event.toolName === "bash") {
@@ -1297,6 +1299,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 	function planModePolicyToolNames() {
 		if (state.enabled) return workflowAllowedToolNames ?? [];
 		return computePlanModePolicyToolNames();
+	}
+
+	function workflowDesiredToolNames() {
+		const policy = state.workflowToolPolicy;
+		if (!state.enabled || policy?.kind !== "explicit") return new Set<string>();
+		return new Set(policy.desiredNames ?? []);
 	}
 
 	function beginWorkflowToolPolicy() {

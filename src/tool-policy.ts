@@ -505,6 +505,7 @@ const GH_VALIDATORS: Record<SafeGhSubcommandPath, ArgumentValidator> = {
 	"issue view": isSafeGhReadArguments,
 	"issue list": isSafeGhReadArguments,
 };
+const DIFF_HELPER_GIT_SUBCOMMANDS = new Set(["diff", "log", "show", "blame"]);
 
 function isSafeStructuredCommand(
 	command: string,
@@ -576,7 +577,7 @@ function isSafeGitCommand(args: string[], safeSubcommands: SafeSubcommands) {
 	const validator = builtinValidator ?? (configured ? configuredValidator : undefined);
 	return (
 		validator !== undefined &&
-		(!globalOptions.usesDirectoryChange || globalOptions.disablesFsmonitor) &&
+		hasSafeDirectoryChangingGitInspection(globalOptions, subcommand, subcommandArgs) &&
 		hasSafeGitArguments(subcommand, subcommandArgs) &&
 		validator(subcommandArgs)
 	);
@@ -610,6 +611,17 @@ function parseGitGlobalOptions(args: string[]) {
 
 function isSafeGitConfigOverride(config: string) {
 	return config.toLowerCase() === "core.fsmonitor=false";
+}
+
+function hasSafeDirectoryChangingGitInspection(
+	globalOptions: Exclude<ReturnType<typeof parseGitGlobalOptions>, undefined>,
+	subcommand: string,
+	args: string[],
+) {
+	if (!globalOptions.usesDirectoryChange) return true;
+	if (!globalOptions.disablesFsmonitor) return false;
+	if (!DIFF_HELPER_GIT_SUBCOMMANDS.has(subcommand)) return true;
+	return args.includes("--no-ext-diff") && args.includes("--no-textconv");
 }
 
 function hasSafeGitArguments(subcommand: string, args: string[]) {
