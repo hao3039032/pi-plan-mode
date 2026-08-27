@@ -542,7 +542,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		}
 	});
 
-	pi.on("tool_call", async (event) => {
+	pi.on("tool_call", async (event, ctx) => {
 		const requiredHelper =
 			event.toolName === PLAN_MODE_QUESTION_TOOL_NAME ||
 			event.toolName === PLAN_MODE_COMPLETE_TOOL_NAME;
@@ -586,13 +586,15 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 				reason: `Plan mode blocks tool '${event.toolName}' because its built-in policy is blocked and settings cannot enable it.`,
 			};
 		}
+		const allowedToolNames = new Set(planModePolicyToolNames());
 		if (!activeToolNames.has(event.toolName)) {
 			return {
 				block: true,
-				reason: `Plan mode blocks tool '${event.toolName}' because it is registered but inactive. Activate it before starting the next Plan workflow.`,
+				reason: allowedToolNames.has(event.toolName)
+					? `Plan mode blocks tool '${event.toolName}' because it was admitted to the active Plan workflow but is currently inactive. Reactivate it to continue without restarting.`
+					: `Plan mode blocks tool '${event.toolName}' because it is registered but inactive. Activate it before starting the next Plan workflow.`,
 			};
 		}
-		const allowedToolNames = new Set(planModePolicyToolNames());
 		if (!allowedToolNames.has(event.toolName)) {
 			return {
 				block: true,
@@ -602,7 +604,11 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			};
 		}
 		if (event.toolName === "bash") {
-			const blocked = findBlockedCommandSegment(readCommand(event.input), settings.safeSubcommands);
+			const blocked = findBlockedCommandSegment(
+				readCommand(event.input),
+				settings.safeSubcommands,
+				ctx.cwd,
+			);
 			if (blocked !== undefined) {
 				return {
 					block: true,
@@ -614,6 +620,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 			const blocked = findBlockedPowerShellCommandSegment(
 				readCommand(event.input),
 				settings.safeSubcommands,
+				ctx.cwd,
 			);
 			if (blocked !== undefined) {
 				return {

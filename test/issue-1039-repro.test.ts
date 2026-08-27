@@ -69,6 +69,25 @@ test("issue 1039: denied tools report inactive, unavailable, frozen, and blocked
 		reason: `Plan mode blocks tool '${CUSTOM_TOOL}' because it is registered but inactive. Activate it before starting the next Plan workflow.`,
 	});
 
+	const deactivated = await startPlan({
+		configured: [CUSTOM_TOOL],
+		activeTools: ["read", CUSTOM_TOOL],
+		allTools: [builtinTool("read"), extensionTool(CUSTOM_TOOL)],
+	});
+	await deactivated.mock.events.get("context")?.[0]?.({ messages: [] }, deactivated.context.ctx);
+	deactivated.mock.rawPi.setActiveTools(["read", "plan_mode_question", "plan_mode_complete"]);
+	assert.deepEqual(await callTool(deactivated, CUSTOM_TOOL), {
+		block: true,
+		reason: `Plan mode blocks tool '${CUSTOM_TOOL}' because it was admitted to the active Plan workflow but is currently inactive. Reactivate it to continue without restarting.`,
+	});
+	deactivated.mock.rawPi.setActiveTools([
+		"read",
+		CUSTOM_TOOL,
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
+	assert.equal(await callTool(deactivated, CUSTOM_TOOL), undefined);
+
 	const late = await startPlan({
 		configured: [CUSTOM_TOOL],
 		activeTools: ["read"],
@@ -132,62 +151,64 @@ test("issue 1039: denied tools report inactive, unavailable, frozen, and blocked
 	});
 });
 
-test("issue 1039: reviewed git -C inspections work with fsmonitor disabled", async () => {
+test("issue 1039: reviewed git -C inspections stay in Pi's working directory", async () => {
+	const workingDirectory = process.cwd();
+	const quotedWorkingDirectory = `'${workingDirectory}'`;
 	for (const command of [
-		"git -c core.fsmonitor=false -C /tmp/repository status --short",
-		"git --no-pager -c core.fsmonitor=false -C /tmp/repository log -1 --oneline --no-ext-diff --no-textconv --submodule=short",
-		"git -c core.fsmonitor=false -C packages -C pi-plan-mode diff --check --no-ext-diff --no-textconv --submodule=short",
-		"git -C packages --no-pager -c core.fsmonitor=false status --short",
+		"git -C . status --short",
+		"git --no-pager -C . log -1 --oneline",
+		"git -C . -C . diff --check",
+		`git -C ${quotedWorkingDirectory} status --short`,
 	]) {
-		assert.equal(isSafeCommand(command), true, `Bash: ${command}`);
-		assert.equal(isSafePowerShellCommand(command), true, `PowerShell: ${command}`);
+		assert.equal(isSafeCommand(command, {}, workingDirectory), true, `Bash: ${command}`);
+		assert.equal(
+			isSafePowerShellCommand(command, {}, workingDirectory),
+			true,
+			`PowerShell: ${command}`,
+		);
 	}
-	const configured = "git -c core.fsmonitor=false -C /tmp/repository rev-parse --show-toplevel";
-	assert.equal(isSafeCommand(configured), false);
-	assert.equal(isSafePowerShellCommand(configured), false);
-	assert.equal(isSafeCommand(configured, { git: ["rev-parse"] }), true);
-	assert.equal(isSafePowerShellCommand(configured, { git: ["rev-parse"] }), true);
+	const configured = "git -C . rev-parse --show-toplevel";
+	assert.equal(isSafeCommand(configured, {}, workingDirectory), false);
+	assert.equal(isSafePowerShellCommand(configured, {}, workingDirectory), false);
+	assert.equal(isSafeCommand(configured, { git: ["rev-parse"] }, workingDirectory), true);
+	assert.equal(isSafePowerShellCommand(configured, { git: ["rev-parse"] }, workingDirectory), true);
 
 	const fixture = await startPlan({
 		activeTools: ["bash", "powershell"],
 		allTools: [builtinTool("bash"), builtinTool("powershell")],
 	});
+	assert.equal(await callTool(fixture, "bash", { command: "git -C . status --short" }), undefined);
 	assert.equal(
-		await callTool(fixture, "bash", {
-			command: "git -c core.fsmonitor=false -C /tmp/repository status --short",
-		}),
-		undefined,
-	);
-	assert.equal(
-		await callTool(fixture, "powershell", {
-			command: "git -c core.fsmonitor=false -C 'C:\\repository path' status --short",
-		}),
+		await callTool(fixture, "powershell", { command: "git -C '.' status --short" }),
 		undefined,
 	);
 });
 
-test("issue 1039: git -C remains fail-closed for malformed and unsafe commands", () => {
+test("issue 1039: git -C rejects other repositories and unsafe commands", () => {
+	const workingDirectory = process.cwd();
+	assert.equal(isSafeCommand("git -C . status --short"), false);
+	assert.equal(isSafePowerShellCommand("git -C . status --short"), false);
 	for (const command of [
 		"git -C",
 		"git -C --no-pager status",
 		"git -C /tmp/repository status --short",
-		"git -c core.fsmonitor=false -C /tmp/repository diff --check",
-		"git -c core.fsmonitor=false -C /tmp/repository diff --check --no-ext-diff",
-		"git -c core.fsmonitor=false -C /tmp/repository log -p -1 --no-textconv",
-		"git -c core.fsmonitor=false -C /tmp/repository diff --check --no-ext-diff --no-textconv",
-		"git -c core.fsmonitor=false -C /tmp/repository diff --submodule=diff --no-ext-diff --no-textconv --submodule=short",
-		"git -c core.fsmonitor=false -C /tmp/repository diff --submodule=short -- --no-ext-diff --no-textconv",
-		"git -c core.fsmonitor=false -C /tmp/repository diff --no-ext-diff --no-textconv -- --submodule=short",
-		"git -c core.fsmonitor=true -C /tmp/repository status --short",
-		"git -c alias.status=!touch -C /tmp/repository status",
-		"git -c core.fsmonitor=false -C /tmp/repository checkout main",
-		"git -c core.fsmonitor=false -C /tmp/repository clean -fd",
-		"git -c core.fsmonitor=false -C /tmp/repository --exec-path=/tmp status",
-		"git -c core.fsmonitor=false -C /tmp/repository diff --ext-diff",
-		"git -c core.fsmonitor=false -C /tmp/repository log --show-signature -1",
+		"git -C packages status --short",
+		"git -C packages -C .. status --short",
+		"git -C ./packages/.. status --short",
+		"git -c core.fsmonitor=false -C . status --short",
+		"git -c alias.status=!touch -C . status",
+		"git -C . checkout main",
+		"git -C . clean -fd",
+		"git -C . --exec-path=/tmp status",
+		"git -C . diff --ext-diff",
+		"git -C . log --show-signature -1",
 		"git --git-dir=/tmp/repository status",
 	]) {
-		assert.equal(isSafeCommand(command), false, `Bash: ${command}`);
-		assert.equal(isSafePowerShellCommand(command), false, `PowerShell: ${command}`);
+		assert.equal(isSafeCommand(command, {}, workingDirectory), false, `Bash: ${command}`);
+		assert.equal(
+			isSafePowerShellCommand(command, {}, workingDirectory),
+			false,
+			`PowerShell: ${command}`,
+		);
 	}
 });
