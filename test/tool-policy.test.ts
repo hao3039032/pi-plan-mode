@@ -457,7 +457,7 @@ test("active Plan mode blocks update_plan and blocked built-ins at the tool hook
 	assert.deepEqual(blockedBuiltin, {
 		block: true,
 		reason:
-			"Plan mode blocks tool 'danger' because it is unavailable or not selected by the Plan policy.",
+			"Plan mode blocks tool 'danger' because its built-in policy is blocked and settings cannot enable it.",
 	});
 	assert.equal(allowed, undefined);
 	assert.deepEqual(optedInExtension, {

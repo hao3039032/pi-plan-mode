@@ -561,8 +561,8 @@ function isSafeStructuredCommand(
 }
 
 function isSafeGitCommand(args: string[], safeSubcommands: SafeSubcommands) {
-	let subcommandIndex = 0;
-	while (args[subcommandIndex] === "--no-pager") subcommandIndex += 1;
+	const subcommandIndex = gitSubcommandIndex(args);
+	if (subcommandIndex === undefined) return false;
 	const subcommand = args[subcommandIndex]?.toLowerCase();
 	if (!subcommand || subcommand.startsWith("-")) return false;
 	const subcommandArgs = args.slice(subcommandIndex + 1);
@@ -579,6 +579,22 @@ function isSafeGitCommand(args: string[], safeSubcommands: SafeSubcommands) {
 		hasSafeGitArguments(subcommand, subcommandArgs) &&
 		validator(subcommandArgs)
 	);
+}
+
+function gitSubcommandIndex(args: string[]) {
+	let index = 0;
+	while (index < args.length) {
+		const argument = args[index];
+		if (argument === "--no-pager") {
+			index += 1;
+			continue;
+		}
+		if (argument !== "-C") break;
+		const directory = args[index + 1];
+		if (!directory || directory.startsWith("-")) return undefined;
+		index += 2;
+	}
+	return index;
 }
 
 function hasSafeGitArguments(subcommand: string, args: string[]) {

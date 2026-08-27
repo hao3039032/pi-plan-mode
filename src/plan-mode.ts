@@ -570,18 +570,33 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 		}
 		if (requiredHelper) return;
 
+		const calledTool = toolByName(event.toolName);
+		const activeToolNames = new Set(safeGetActiveTools());
+		if (!calledTool) {
+			return {
+				block: true,
+				reason: activeToolNames.has(event.toolName)
+					? `Plan mode blocks tool '${event.toolName}' because its safe policy metadata is unavailable.`
+					: `Plan mode blocks tool '${event.toolName}' because it is not registered or active. Register and activate it before starting the next Plan workflow.`,
+			};
+		}
+		if (classifyPlanModeTool(calledTool) === "blocked") {
+			return {
+				block: true,
+				reason: `Plan mode blocks tool '${event.toolName}' because its built-in policy is blocked and settings cannot enable it.`,
+			};
+		}
+		if (!activeToolNames.has(event.toolName)) {
+			return {
+				block: true,
+				reason: `Plan mode blocks tool '${event.toolName}' because it is registered but inactive. Activate it before starting the next Plan workflow.`,
+			};
+		}
 		const allowedToolNames = new Set(planModePolicyToolNames());
 		if (!allowedToolNames.has(event.toolName)) {
 			return {
 				block: true,
-				reason: `Plan mode blocks tool '${event.toolName}' because it is unavailable or not selected by the Plan policy.`,
-			};
-		}
-		const calledTool = toolByName(event.toolName);
-		if (!calledTool || classifyPlanModeTool(calledTool) === "blocked") {
-			return {
-				block: true,
-				reason: `Plan mode blocks tool '${event.toolName}' because its safe policy metadata is unavailable.`,
+				reason: `Plan mode blocks tool '${event.toolName}' because it is not selected by the Plan policy. Exit Plan mode, then enable it with /plan tools or defaultPlanTools before starting again.`,
 			};
 		}
 		if (event.toolName === "bash") {
