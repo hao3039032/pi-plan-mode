@@ -80,6 +80,26 @@ test("issue 1039: denied tools report inactive, unavailable, frozen, and blocked
 		reason: `Plan mode blocks tool '${CUSTOM_TOOL}' because it was not available when the active Plan workflow froze its tool policy. Exit Plan mode, then start again after the tool is active.`,
 	});
 
+	const lateAutomatic = await startPlan({
+		activeTools: ["read"],
+		allTools: [builtinTool("read"), builtinTool("powershell")],
+	});
+	await lateAutomatic.mock.events.get("context")?.[0]?.(
+		{ messages: [] },
+		lateAutomatic.context.ctx,
+	);
+	lateAutomatic.mock.rawPi.setActiveTools([
+		"read",
+		"powershell",
+		"plan_mode_question",
+		"plan_mode_complete",
+	]);
+	assert.deepEqual(await callTool(lateAutomatic, "powershell"), {
+		block: true,
+		reason:
+			"Plan mode blocks tool 'powershell' because it was not available when the active Plan workflow froze its tool policy. Exit Plan mode, then start again after the tool is active.",
+	});
+
 	const unavailable = await startPlan({
 		configured: [CUSTOM_TOOL],
 		activeTools: ["read"],
@@ -115,8 +135,8 @@ test("issue 1039: denied tools report inactive, unavailable, frozen, and blocked
 test("issue 1039: reviewed git -C inspections work with fsmonitor disabled", async () => {
 	for (const command of [
 		"git -c core.fsmonitor=false -C /tmp/repository status --short",
-		"git --no-pager -c core.fsmonitor=false -C /tmp/repository log -1 --oneline --no-ext-diff --no-textconv",
-		"git -c core.fsmonitor=false -C packages -C pi-plan-mode diff --check --no-ext-diff --no-textconv",
+		"git --no-pager -c core.fsmonitor=false -C /tmp/repository log -1 --oneline --no-ext-diff --no-textconv --submodule=short",
+		"git -c core.fsmonitor=false -C packages -C pi-plan-mode diff --check --no-ext-diff --no-textconv --submodule=short",
 		"git -C packages --no-pager -c core.fsmonitor=false status --short",
 	]) {
 		assert.equal(isSafeCommand(command), true, `Bash: ${command}`);
@@ -154,6 +174,10 @@ test("issue 1039: git -C remains fail-closed for malformed and unsafe commands",
 		"git -c core.fsmonitor=false -C /tmp/repository diff --check",
 		"git -c core.fsmonitor=false -C /tmp/repository diff --check --no-ext-diff",
 		"git -c core.fsmonitor=false -C /tmp/repository log -p -1 --no-textconv",
+		"git -c core.fsmonitor=false -C /tmp/repository diff --check --no-ext-diff --no-textconv",
+		"git -c core.fsmonitor=false -C /tmp/repository diff --submodule=diff --no-ext-diff --no-textconv --submodule=short",
+		"git -c core.fsmonitor=false -C /tmp/repository diff --submodule=short -- --no-ext-diff --no-textconv",
+		"git -c core.fsmonitor=false -C /tmp/repository diff --no-ext-diff --no-textconv -- --submodule=short",
 		"git -c core.fsmonitor=true -C /tmp/repository status --short",
 		"git -c alias.status=!touch -C /tmp/repository status",
 		"git -c core.fsmonitor=false -C /tmp/repository checkout main",

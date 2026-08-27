@@ -1303,8 +1303,10 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
 	function workflowDesiredToolNames() {
 		const policy = state.workflowToolPolicy;
-		if (!state.enabled || policy?.kind !== "explicit") return new Set<string>();
-		return new Set(policy.desiredNames ?? []);
+		if (!state.enabled || !policy) return new Set<string>();
+		return new Set(
+			policy.kind === "automatic" ? automaticPlanModeToolNames() : (policy.desiredNames ?? []),
+		);
 	}
 
 	function beginWorkflowToolPolicy() {

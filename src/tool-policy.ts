@@ -621,7 +621,19 @@ function hasSafeDirectoryChangingGitInspection(
 	if (!globalOptions.usesDirectoryChange) return true;
 	if (!globalOptions.disablesFsmonitor) return false;
 	if (!DIFF_HELPER_GIT_SUBCOMMANDS.has(subcommand)) return true;
-	return args.includes("--no-ext-diff") && args.includes("--no-textconv");
+	const optionTerminatorIndex = args.indexOf("--");
+	const optionArgs = args.slice(
+		0,
+		optionTerminatorIndex === -1 ? args.length : optionTerminatorIndex,
+	);
+	return (
+		optionArgs.includes("--no-ext-diff") &&
+		optionArgs.includes("--no-textconv") &&
+		optionArgs.includes("--submodule=short") &&
+		!optionArgs.some(
+			(argument) => argument.startsWith("--submodule") && argument !== "--submodule=short",
+		)
+	);
 }
 
 function hasSafeGitArguments(subcommand: string, args: string[]) {

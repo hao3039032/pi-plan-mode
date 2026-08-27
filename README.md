@@ -155,9 +155,9 @@ Limited `bash` uses a fail-closed Bash policy, including when an extension overr
 It accepts common inspection commands, read-only Git and npm queries, pipelines and command lists composed entirely of accepted commands, plus selected checks such as `npm test`, `npm run typecheck`, and `cargo test`.
 Reviewed Git inspections may place `--no-pager` before the accepted subcommand.
 They may also place one or more complete `-C <path>` pairs before the accepted subcommand only when `-c core.fsmonitor=false` is also provided before the subcommand.
-Directory-changing `git diff`, `git log`, `git show`, and `git blame` inspections must also pass `--no-ext-diff` and `--no-textconv`.
-This prevents the target repository's `core.fsmonitor`, external diff, and textconv configuration from running configured helpers during inspection.
-It rejects output/input redirects, shell expansion, substitutions, subshells, background jobs, incomplete `-C` pairs, other Git global options, unsafe Git config overrides, missing diff-helper overrides, mutating flags, dependency changes, editors, and unknown commands.
+Directory-changing `git diff`, `git log`, `git show`, and `git blame` inspections must also pass `--no-ext-diff`, `--no-textconv`, and `--submodule=short` before any `--` pathspec delimiter.
+This prevents the target repository's `core.fsmonitor`, external diff, textconv, and recursive submodule diff configuration from running configured helpers during inspection.
+It rejects output/input redirects, shell expansion, substitutions, subshells, background jobs, incomplete `-C` pairs, other Git global options, unsafe Git config overrides, missing or misplaced diff-helper overrides, recursive submodule diff modes, mutating flags, dependency changes, editors, and unknown commands.
 
 Limited `powershell` uses a separate fail-closed PowerShell policy, including when an extension overrides the canonical `powershell` tool name.
 It accepts canonical inspection cmdlets such as `Get-ChildItem`, `Get-Content`, `Get-Item`, `Get-Location`, `Resolve-Path`, `Select-String`, `Test-Path`, `Measure-Object`, `Sort-Object`, `Format-List`, `Format-Table`, `Out-String`, and `Write-Output`.
@@ -425,7 +425,7 @@ git blame -- src/plan-mode.ts
 git diff --cached
 git show --stat --oneline HEAD
 git log -p -1 HEAD -- src/plan-mode.ts
-git -c core.fsmonitor=false -C packages/pi-plan-mode diff --check --no-ext-diff --no-textconv
+git -c core.fsmonitor=false -C packages/pi-plan-mode diff --check --no-ext-diff --no-textconv --submodule=short
 gh pr view 218 --json number,title,state
 gh issue list --state open --json number,title,state
 ```
@@ -436,6 +436,8 @@ The command-specific validators still reject unsafe forms, including:
 git -C
 git -C packages/pi-plan-mode status --short
 git -c core.fsmonitor=false -C packages/pi-plan-mode diff --check
+git -c core.fsmonitor=false -C packages/pi-plan-mode diff --submodule=diff --no-ext-diff --no-textconv --submodule=short
+git -c core.fsmonitor=false -C packages/pi-plan-mode diff --submodule=short -- --no-ext-diff --no-textconv
 git -C packages/pi-plan-mode checkout main
 git blame --textconv -- src/plan-mode.ts
 git cat-file --filters HEAD
