@@ -2,20 +2,18 @@
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-plan-mode)](https://www.npmjs.com/package/@narumitw/pi-plan-mode) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Explore a codebase, resolve important questions, and produce an implementation-ready plan before Pi is allowed to edit files.
-
-This independently installable extension adds a Codex-like `/plan` collaboration mode that Pi core does not provide.
+Use a Codex-like `/plan` mode to explore a codebase, resolve important questions, and approve an implementation-ready plan before Pi edits files.
 
 ## ✨ Features
 
 - Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`.
-- Keeps Plan helper schemas stable from startup while runtime policy blocks inactive helpers, mutations, and unsafe shell forms.
-- Requires structured questions for important ambiguity and explicit completion for a decision-ready plan.
-- Reviews the complete plan before implementation, export, save, continued planning, or discard.
-- Starts implementation in the planning session or a fresh linked session with the exact approved plan.
-- Persists Plan state and one saved plan across resume and compaction.
-- Exposes statusline state and a configurable Plan tool allowlist, including reviewed native PowerShell inspection on Windows, plus export destination, plan reinjection, shortcut, and thinking level.
-- Cooperates anonymously with Workflow Mutex Protocol v1 participants so only one agent workflow starts in a session.
+- Blocks mutations, inactive helpers, and unsafe shell forms while keeping helper schemas stable.
+- Uses structured questions for important ambiguity and explicit completion for a decision-ready plan.
+- Reviews the complete plan before implementation, export, save, further planning, or discard.
+- Implements in the planning session or a fresh linked session with the approved plan.
+- Restores Plan state and one saved plan across resume and compaction.
+- Configures the Plan tool allowlist, export path, plan reinjection, shortcut, and thinking level.
+- Publishes statusline state and cooperates anonymously with Workflow Mutex Protocol v1 participants.
 
 ## 📦 Install
 
@@ -39,36 +37,13 @@ npm --workspace @narumitw/pi-plan-mode run build
 pi -e ./packages/pi-plan-mode
 ```
 
-The package declares `dist/index.ts`, so an unbuilt local checkout must run the build before Pi loads the package directory.
+The package declares `dist/index.ts`, so build an unbuilt local checkout before Pi loads the package directory.
+Install only from sources you trust because Pi extensions run with Pi's permissions.
 
 ## 🚀 Quick start
 
 Run `/plan` to open the state-aware menu, then start Plan mode and ask the agent to inspect and design the change.
 Run `/plan <prompt>` when the first planning request is already known.
-
-## 🧱 Cache-stable mode transitions
-
-Plan and Normal requests share one append-only conversation.
-The extension appends one hidden, model-visible, versioned Plan contract before the first Plan prompt and one Normal contract before the first post-Plan Normal or implementation prompt.
-Ordinary linear turns do not rewrite or duplicate these contracts.
-**Implement here** therefore retains the Plan dialogue, structured questions, assistant tool calls, completion evidence, and `Implement the plan.` kickoff in order.
-**Start fresh and implement** remains the explicit isolation path and transfers only the approved plan plus the Normal mode contract to a linked session.
-
-The `context` hook filters legacy repeated `plan-mode-context` artifacts but preserves current transition messages.
-When compaction removes the effective physical transition, the hook inserts one canonical fallback at a deterministic retained-history boundary.
-Repeated transforms leave that fallback in place instead of moving it to the newest turn.
-An inactive legacy state entry alone does not inject a Normal contract, so sessions that never entered Plan mode keep their ordinary context after resume or reload.
-Manual `/tree` navigation restores branch-owned Plan state and chooses the matching effective contract without navigating automatically or adding a branch summary.
-Pi currently lists hidden custom transition messages in `/tree`; Plan mode rejects those internal targets, so select an adjacent conversation entry instead.
-
-Plan mode registers `plan_mode_question` and `plan_mode_complete` once and keeps their names and definitions stable across Normal, Plan, ready, implementation, and restored workflows.
-Visible helpers do not mean `/plan` is active, and their global descriptions explicitly exclude ordinary planning, the `writing-plans` skill, roadmaps, checklists, and plan-file work.
-Positive helper instructions live only in the latest effective active Plan contract, while inactive or stale calls fail without accepting a plan or opening question UI.
-Plan mode never widens a restrictive active-tool policy; start or restore fails when a required helper is unavailable.
-Stable schemas preserve a cache-eligible prefix but cannot guarantee a hit because provider serialization, cache lifetime, minimum cacheable prefix, implementation details, and session affinity remain external.
-
-The default `thinkingLevel: "inherit"` path also avoids a Plan-specific reasoning-parameter change.
-Choosing a fixed Plan thinking level remains supported, but switching reasoning parameters can prevent provider-side state reuse even when system instructions and tool schemas are stable.
 
 ## 💬 Commands
 
@@ -95,12 +70,12 @@ Use `/plan <prompt>` to enter Plan mode and immediately submit `<prompt>` as the
 The exact argument `start` is reserved for direct activation; longer text such as `/plan start a migration` remains an inline planning prompt.
 The extension does not register a startup flag; run `/plan start` after launch for direct activation.
 
-Use **Choose tools, then start…** or the `/plan tools` compatibility shortcut to choose a session-specific Plan policy override before Planning starts.
+Use **Choose tools, then start…** or the `/plan tools` compatibility shortcut to choose a session-specific Plan policy before planning starts.
 Both routes use the same draft selector: **Done — start with this policy** stores the allowlist and starts the workflow, while cancellation leaves Plan mode off and changes nothing.
 The bounded multi-select shows 10 rows at a time, supports viewport paging, descriptions, and explicit unavailable rows for blocked, currently inactive, or configured but not-yet-registered tools.
 Configured or previously selected names without current metadata appear as pending registration and remain selected for first-request resolution.
 Reopen the picker to refresh tools registered while it was closed because Pi exposes no live tool-registration event.
-In TUI mode, type to fuzzy-search tool names, descriptions, policy, and source metadata; RPC keeps the complete unfiltered list.
+In TUI mode, type to fuzzy-search tool names, descriptions, policy, and source metadata; RPC shows the complete unfiltered list.
 Once Plan mode is active, tools are locked: `/plan` no longer offers tool or Settings actions, and `/plan tools` rejects the request.
 Exit and start a new workflow if a different tool set is required.
 The `plan_mode_question` tool keeps a dedicated model-requested questionnaire instead of using command-menu navigation.
@@ -135,10 +110,11 @@ A failed TUI export retains the draft for correction; RPC reopens its input dial
 Escape returns to the owning menu without writing a file.
 A successful ready-plan export closes the menu and ends Plan mode; saved and active implementation menus close without changing their stored state.
 
-When Plan mode is active, ask the agent to design the change.
-The agent may inspect files and run read-only commands, but it should not edit files or execute the implementation.
-It should explore first, then use structured questions when your preference or a tradeoff materially changes the plan.
-Configure persistent defaults or a one-workflow tool override before activation; Planning and ready menus deliberately keep those controls locked.
+## 🔒 Security and privacy
+
+While Plan mode is active, the policy blocks built-in editing tools and instructs the agent not to edit files or implement the change.
+It should explore first and ask structured questions when a preference or tradeoff materially changes the plan.
+Configure persistent defaults or a one-workflow tool override before activation; active and ready workflows lock those controls.
 
 Plan mode registers `plan_mode_question` and `plan_mode_complete` during extension load and never changes their active status itself.
 Another active-tool policy may hide them, in which case Plan start or restore fails without widening that policy.
@@ -167,7 +143,9 @@ Use canonical cmdlet names because PowerShell aliases are intentionally outside 
 
 A rejected parsed command list or pipeline identifies its first blocked command segment; malformed or unsupported shell syntax reports the complete submitted input instead.
 Tests and builds may still write ignored caches or build artifacts and may execute project-defined hooks; enable or invoke them only when the repository is trusted.
-Both limited-shell policies are extension-level risk reduction, not an OS sandbox or confidentiality boundary.
+Both limited-shell policies reduce risk but do not provide an OS sandbox or confidentiality boundary.
+
+## 🧭 Planning and implementation
 
 `plan_mode_question` follows Codex's `request_user_input` pattern: the agent can ask 1-3 concise questions, each with meaningful options and a free-form Other path.
 In TUI mode, a single question shows its header as plain muted text, submits as soon as its preset or custom answer is confirmed, and does not show tabs, Review, or question-navigation controls.
@@ -280,6 +258,30 @@ During a guaranteed-plan implementation, it removes both the original implementa
 /plan exit
 ```
 
+## 🧱 Cache-stable mode transitions
+
+Plan and Normal requests share one append-only conversation.
+The extension appends one hidden, model-visible, versioned Plan contract before the first Plan prompt and one Normal contract before the first post-Plan Normal or implementation prompt.
+Ordinary linear turns do not rewrite or duplicate these contracts.
+**Implement here** retains the Plan dialogue, structured questions, tool calls, completion evidence, and `Implement the plan.` kickoff in order.
+**Start fresh and implement** is the isolation path and transfers only the approved plan plus the Normal contract to a linked session.
+
+The `context` hook filters repeated legacy `plan-mode-context` artifacts but preserves current transition messages.
+If compaction removes the effective transition, the hook inserts one canonical fallback at a deterministic retained-history boundary.
+Repeated transforms leave that fallback in place instead of moving it to the newest turn.
+An inactive legacy state entry does not inject a Normal contract, so sessions that never entered Plan mode keep their ordinary context after resume or reload.
+Manual `/tree` navigation restores branch-owned Plan state and chooses the matching contract without navigating or adding a branch summary.
+Pi lists hidden transition messages in `/tree`; Plan mode rejects those internal targets, so select an adjacent conversation entry.
+
+Plan mode registers `plan_mode_question` and `plan_mode_complete` once and keeps their names and definitions stable across Normal, Plan, ready, implementation, and restored workflows.
+Visible helpers do not mean `/plan` is active, and their descriptions exclude ordinary planning, the `writing-plans` skill, roadmaps, checklists, and plan-file work.
+Only the latest active Plan contract authorizes the helpers; inactive or stale calls fail without accepting a plan or opening question UI.
+Plan mode does not widen a restrictive active-tool policy; start or restore fails when a required helper is unavailable.
+Stable schemas preserve a cache-eligible prefix but cannot guarantee a hit because provider serialization, cache lifetime, minimum prefix size, implementation details, and session affinity remain external.
+
+The default `thinkingLevel: "inherit"` avoids a Plan-specific reasoning-parameter change.
+A fixed Plan thinking level remains supported, but changing reasoning parameters can prevent provider-side state reuse even when prompts and tool schemas stay stable.
+
 ## 🤝 Workflow coexistence
 
 Plan mode is independently installable and keeps its standalone behavior when no other protocol participant is present.
@@ -316,12 +318,11 @@ Guaranteed coexistence with Goal requires `@narumitw/pi-goal` `0.53.0` or newer 
 
 ## ⚙️ Settings
 
-Open **Settings** from an inactive `/plan` menu to edit one flat group of five workflow choices: **Plan thinking**, **Plan policy tools**, **Plan reinjection**, **Export destination**, and **Plan mode shortcut**.
+Open **Settings** from an inactive `/plan` menu to edit **Plan thinking**, **Plan policy tools**, **Plan reinjection**, **Export destination**, and **Plan mode shortcut**.
 You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually.
-`safeSubcommands` remains JSON-only.
-You can change the Plan-mode shortcut with `toggleShortcut` as long as the file remains JSON-only and uses a valid key string.
-The file is optional, is read at session start and reloaded automatically when changed, and is created only after an explicit Settings save or manual edit.
-When omitted, the shortcut is disabled by default.
+`safeSubcommands` is JSON-only.
+The optional file is read at session start, watched for changes, and created only by an explicit Settings save or manual edit.
+The shortcut is disabled when `toggleShortcut` is omitted.
 ```json
 {
   "thinkingLevel": "inherit",
@@ -485,16 +486,12 @@ If both files exist, the canonical filename takes precedence.
 
 This extension maps Codex's `ModeKind::Plan` behavior onto Pi's extension API:
 
-- Plan mode is a conversational collaboration mode, not TODO/progress tracking.
-- `/plan <prompt>` follows Codex behavior by switching to Plan mode before submitting the inline prompt.
-- The agent should use `plan_mode_question` for important non-discoverable preferences or tradeoffs before finalizing.
-- The agent completes with a standalone `plan_mode_complete` tool call instead of relying on semantic prose detection.
-- `update_plan` checklist use is blocked while Plan mode is active.
-- The implementation boundary is explicit: Plan mode appends the Normal contract and lifts its runtime allowlist before saving or starting implementation, while revealed helpers remain active.
-- The default `clear-on-start` policy follows Codex by using ordinary conversation history only; `clear-after-first-run` and `keep` add explicit exact-plan guarantees.
-- Pi extension safety is approximated with tool classification and separate fail-closed filtering for every effective tool named `bash` or `powershell`; other non-built-in tools remain user-selected at user risk because Pi does not expose standardized tool mutability metadata.
-- Plan and Normal instructions are append-only conversation contracts, while helper schemas stay stable from startup and visible helpers remain inactive without the latest effective Plan contract.
-- Unlike native Codex, this extension uses a terminating Pi tool plus an `agent_settled` ready flow; Pi cannot provide sandbox-level enforcement.
+- Plan mode is conversational collaboration, not TODO or progress tracking.
+- `/plan <prompt>` enters Plan mode before submitting the prompt.
+- The agent uses `plan_mode_question` for material preferences and completes with a standalone `plan_mode_complete` call instead of prose detection.
+- `update_plan` is blocked until the explicit implementation boundary restores Normal mode.
+- The default `clear-on-start` policy uses conversation history; `clear-after-first-run` and `keep` add exact-plan guarantees.
+- Append-only Plan and Normal contracts keep helper schemas stable, but Pi's tool policy is risk reduction rather than Codex sandbox enforcement.
 
 ## 🗂️ Package layout
 
@@ -504,7 +501,7 @@ packages/pi-plan-mode/
 ├── scripts/
 │   └── build-runtime.mjs  # Deterministic runtime builder and boundary validator
 ├── src/
-│   ├── index.ts      # Pi package entrypoint
+│   ├── index.ts           # Thin Pi package entrypoint
 │   ├── plan-mode.ts      # Extension registration, mode state, and UI loading boundary
 │   ├── interactive-ui.ts # Lazily loaded interactive menu surface
 │   └── *.ts              # Package-local prompt, policy, question, and message modules
