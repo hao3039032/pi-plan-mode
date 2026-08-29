@@ -102,6 +102,33 @@ test("isSafeCommand permits read-only command lists and rejects shell mutation",
 	}
 });
 
+test("Bash policy permits only conservative local system diagnostics", () => {
+	assert.equal(isSafeCommand("hostname"), true);
+	for (const command of ["hostname changed-host", "hostname -F hostname.txt"]) {
+		assert.equal(isSafeCommand(command), false, command);
+	}
+
+	for (const command of [
+		"tasklist",
+		"tasklist /V /FO CSV /NH",
+		'tasklist /FI "STATUS eq running"',
+		"tasklist /M ntdll.dll /SVC",
+	]) {
+		assert.equal(isSafeCommand(command, {}, undefined, "win32"), true, command);
+	}
+	for (const command of [
+		"tasklist /S remote-host",
+		"tasklist /U account",
+		"tasklist /P secret",
+		"tasklist /FO HTML",
+		"tasklist /FI",
+		"tasklist /unknown",
+	]) {
+		assert.equal(isSafeCommand(command, {}, undefined, "win32"), false, command);
+	}
+	assert.equal(isSafeCommand("tasklist", {}, undefined, "linux"), false);
+});
+
 test("blocked command diagnostics identify the first rejected segment", () => {
 	const accepted = "git status --short && git diff --cached | head -20";
 	const singleBlocked = "touch output";
@@ -171,6 +198,38 @@ test("PowerShell policy permits reviewed inspection commands", () => {
 		"git log -1 --oneline",
 	]) {
 		assert.equal(isSafePowerShellCommand(command), true, command);
+	}
+});
+
+test("PowerShell policy permits only conservative local process and service queries", () => {
+	for (const command of [
+		"Get-Process",
+		"Get-Process -Name pwsh",
+		"Get-Process -Id 123 -Module",
+		"Get-Process pwsh -IncludeUserName | Format-Table Name,Id",
+		"Get-Service",
+		"Get-Service -Name sshd -RequiredServices",
+		"Get-Service -DisplayName 'Windows Update'",
+		"Get-Service win* | Sort-Object DisplayName",
+	]) {
+		assert.equal(isSafePowerShellCommand(command), true, command);
+	}
+	for (const command of [
+		"Get-Process -ComputerName remote-host",
+		"Get-Process -CimSession remote-host",
+		"Get-Process -InputObject process",
+		"Get-Process -Name",
+		"Get-Process one two",
+		"Get-Service -ComputerName remote-host",
+		"Get-Service -CimSession remote-host",
+		"Get-Service -InputObject service",
+		"Get-Service -Name",
+		"Get-Process | Stop-Process",
+		"Get-Service | Stop-Service",
+		"gps pwsh",
+		"gsv sshd",
+	]) {
+		assert.equal(isSafePowerShellCommand(command), false, command);
 	}
 });
 
