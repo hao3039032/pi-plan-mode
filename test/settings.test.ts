@@ -168,22 +168,25 @@ test("Plan-mode settings ignore unknown top-level fields", () => {
 	);
 });
 
-test("Plan-mode settings validate safe subcommands strictly", async () => {
+test("Plan-mode settings accept arbitrary user-trusted safe subcommands", () => {
 	assert.deepEqual(
 		normalizePlanModeSettings({
 			thinkingLevel: "medium",
 			defaultPlanTools: ["read", "bash"],
 			safeSubcommands: {
-				git: ["status", "rev-parse", "status", "cat-file"],
-				gh: ["pr view", "issue list", "pr view"],
+				git: ["status", " checkout ", "status"],
+				gh: ["pr merge"],
+				kubectl: ["apply", "get pods"],
+				" git ": ["custom-command"],
 			},
 		}),
 		{
 			thinkingLevel: "medium",
 			defaultPlanTools: ["read", "bash"],
 			safeSubcommands: {
-				git: ["status", "rev-parse", "cat-file"],
-				gh: ["pr view", "issue list"],
+				git: ["status", "checkout", "custom-command"],
+				gh: ["pr merge"],
+				kubectl: ["apply", "get pods"],
 			},
 		},
 	);
@@ -199,12 +202,11 @@ test("Plan-mode settings validate safe subcommands strictly", async () => {
 	for (const safeSubcommands of [
 		null,
 		[],
-		{ kubectl: ["get"] },
+		{ " ": ["get"] },
 		{ git: "status" },
-		{ git: ["checkout"] },
 		{ git: ["status", 42] },
-		{ gh: ["pr merge"] },
 		{ gh: ["pr view", ""] },
+		{ kubectl: ["   "] },
 	]) {
 		assert.equal(normalizePlanModeSettings({ safeSubcommands }), undefined);
 	}
@@ -223,7 +225,7 @@ test("Plan-mode settings updates create only on explicit save and preserve unkno
 		);
 		await writeFile(
 			settingsPath,
-			'{"future":{"kept":true},"thinkingLevel":"high","defaultPlanTools":["read","bash"],"safeSubcommands":{"gh":["pr view"]}}\n',
+			'{"future":{"kept":true},"thinkingLevel":"high","defaultPlanTools":["read","bash"],"safeSubcommands":{"gh":["pr merge"],"kubectl":["apply"]}}\n',
 		);
 		await updatePlanModeSettings(
 			{ thinkingLevel: "medium", defaultPlanTools: null },
@@ -233,13 +235,13 @@ test("Plan-mode settings updates create only on explicit save and preserve unkno
 		assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
 			future: { kept: true },
 			thinkingLevel: "medium",
-			safeSubcommands: { gh: ["pr view"] },
+			safeSubcommands: { gh: ["pr merge"], kubectl: ["apply"] },
 		});
 		assert.deepEqual(await readPlanModeSettings(settingsPath), {
 			kind: "loaded",
 			settings: {
 				thinkingLevel: "medium",
-				safeSubcommands: { gh: ["pr view"] },
+				safeSubcommands: { gh: ["pr merge"], kubectl: ["apply"] },
 			},
 		});
 	} finally {

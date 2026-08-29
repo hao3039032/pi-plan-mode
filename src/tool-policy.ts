@@ -30,8 +30,7 @@ export type ConfigurableSafeGitSubcommand = (typeof CONFIGURABLE_SAFE_GIT_SUBCOM
 export type SafeGitSubcommand = (typeof SAFE_GIT_SUBCOMMANDS)[number];
 export type SafeGhSubcommandPath = (typeof SAFE_GH_SUBCOMMAND_PATHS)[number];
 export interface SafeSubcommands {
-	git?: SafeGitSubcommand[];
-	gh?: SafeGhSubcommandPath[];
+	[command: string]: string[] | undefined;
 }
 
 export const SAFE_BUILTIN_PLAN_TOOLS = new Set([
@@ -149,6 +148,7 @@ export function findBlockedCommandSegment(
 	safeSubcommands: SafeSubcommands = {},
 	workingDirectory?: string,
 ): string | undefined {
+	if (matchesConfiguredSafeSubcommand(command, safeSubcommands)) return undefined;
 	const segments = splitShellSegments(command);
 	if (!segments || segments.length === 0) return command.trim() || "(empty command)";
 	return segments.find((segment) => !isSafeSegment(segment, safeSubcommands, workingDirectory));
@@ -167,6 +167,7 @@ export function findBlockedPowerShellCommandSegment(
 	safeSubcommands: SafeSubcommands = {},
 	workingDirectory?: string,
 ): string | undefined {
+	if (matchesConfiguredSafeSubcommand(command, safeSubcommands)) return undefined;
 	const segments = splitPowerShellSegments(command);
 	if (!segments || segments.length === 0) return command.trim() || "(empty command)";
 	return segments.find(
@@ -181,6 +182,20 @@ export function isSafePowerShellCommand(
 ) {
 	return (
 		findBlockedPowerShellCommandSegment(command, safeSubcommands, workingDirectory) === undefined
+	);
+}
+
+function matchesConfiguredSafeSubcommand(command: string, safeSubcommands: SafeSubcommands) {
+	const candidate = command.trimStart();
+	return Object.entries(safeSubcommands).some(([configuredCommand, subcommands]) =>
+		subcommands?.some((subcommand) => {
+			const prefix = `${configuredCommand.trim()} ${subcommand.trim()}`;
+			if (!configuredCommand.trim() || !subcommand.trim() || !candidate.startsWith(prefix)) {
+				return false;
+			}
+			const boundary = candidate[prefix.length];
+			return boundary === undefined || /[\s;&|<>()]/.test(boundary);
+		}),
 	);
 }
 

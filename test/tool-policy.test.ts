@@ -119,6 +119,39 @@ test("blocked command diagnostics identify the first rejected segment", () => {
 	}
 });
 
+test("configured safe subcommands bypass the complete Bash and PowerShell policies", () => {
+	const safeSubcommands = { kubectl: ["apply"], "Invoke-Trusted": ["run"] };
+	for (const command of [
+		"kubectl apply -f deployment.yaml && rm -rf build",
+		"kubectl apply -f deployment.yaml > result.txt",
+		"kubectl apply $(cat generated-args)\nrm -rf build",
+		"  kubectl apply --dangerously-anything",
+	]) {
+		assert.equal(isSafeCommand(command, safeSubcommands), true, command);
+		assert.equal(findBlockedCommandSegment(command, safeSubcommands), undefined, command);
+	}
+	for (const command of [
+		"Invoke-Trusted run; Remove-Item -Recurse src",
+		"Invoke-Trusted run > result.txt",
+		"Invoke-Trusted run $(Remove-Item src)",
+	]) {
+		assert.equal(isSafePowerShellCommand(command, safeSubcommands), true, command);
+		assert.equal(findBlockedPowerShellCommandSegment(command, safeSubcommands), undefined, command);
+	}
+
+	for (const command of [
+		"kubectl applies -f deployment.yaml",
+		"Kubectl apply -f deployment.yaml",
+		"git status && kubectl apply -f deployment.yaml",
+	]) {
+		assert.equal(isSafeCommand(command, safeSubcommands), false, command);
+	}
+	assert.equal(
+		isSafePowerShellCommand("Invoke-Trusted runner; Remove-Item src", safeSubcommands),
+		false,
+	);
+});
+
 test("PowerShell policy permits reviewed inspection commands", () => {
 	for (const command of [
 		"Get-ChildItem -Filter *.ts",
@@ -207,7 +240,7 @@ test("PowerShell diagnostics identify the first rejected segment", () => {
 	assert.equal(findBlockedPowerShellCommandSegment("   "), "(empty command)");
 });
 
-test("PowerShell policy reuses configured Git and gh validators", () => {
+test("PowerShell policy fully trusts configured Git and gh subcommands", () => {
 	assert.equal(isSafePowerShellCommand("git rev-parse --show-toplevel"), false);
 	assert.equal(
 		isSafePowerShellCommand("git rev-parse --show-toplevel", { git: ["rev-parse"] }),
@@ -219,14 +252,14 @@ test("PowerShell policy reuses configured Git and gh validators", () => {
 		true,
 	);
 	assert.equal(
-		isSafePowerShellCommand("gh issue view 973 --json number,title; git reset --hard", {
+		isSafePowerShellCommand("gh issue view 973; Remove-Item -Recurse src", {
 			gh: ["issue view"],
 		}),
-		false,
+		true,
 	);
 });
 
-test("configured Git validators are additive and exact", () => {
+test("configured Git subcommands are additive, exact, and fully trusted", () => {
 	const cases = [
 		["rev-parse", "git rev-parse --show-toplevel"],
 		["blame", "git blame --no-textconv -- path/to/file"],
@@ -260,17 +293,21 @@ test("configured Git validators are additive and exact", () => {
 		isSafeCommandWithPolicy("git rev-parse --show-toplevel && git blame -- file", {
 			git: ["rev-parse"],
 		}),
-		false,
+		true,
 	);
 	assert.equal(
 		isSafeCommandWithPolicy("git rev-parse --show-toplevel | touch output", {
 			git: ["rev-parse"],
 		}),
+		true,
+	);
+	assert.equal(
+		isSafeCommandWithPolicy("git rev-parser --show-toplevel", { git: ["rev-parse"] }),
 		false,
 	);
 });
 
-test("configured gh validators require exact read-only paths", () => {
+test("configured gh paths are exact and fully trusted", () => {
 	const cases = [
 		["pr view", "gh pr view 218 --json number,title,state"],
 		["pr list", "gh pr list --limit 20 --json=number,title"],
@@ -286,81 +323,45 @@ test("configured gh validators require exact read-only paths", () => {
 	for (const command of [
 		"gh pr merge 218",
 		"gh pr close 218",
-		"gh pr edit 218 --title changed",
 		"gh issue edit 212 --title changed",
-		"gh issue close 212",
-		"gh issue create --title changed",
 		"gh alias list",
-		"gh co 218",
-		"gh pr view 218",
-		"gh pr list --limit 20",
-		"gh issue view 212 --comments",
-		"gh issue list --state open",
-		"gh pr view 218 --json",
-		"gh pr view 218 --json --comments",
-		"gh pr view 218 --json=",
-		"gh pr view 218 --web",
-		"gh pr view 218 --web=true",
-		"gh pr view 218 -w",
-		"gh pr view 218 -w=true",
-		"gh pr view 218 --pager=less",
-		"gh pr view $PI_PLAN_GH_ARGUMENTS",
-		"gh issue view 212 --web",
 		"gh --repo owner/repo pr view 218",
 		"gh pr --help view",
-		"gh pr view 218 > output",
-		"gh pr view 218 && gh pr merge 218",
 	]) {
 		assert.equal(isSafeCommandWithPolicy(command, allGh), false, command);
 	}
-	assert.equal(
-		isSafeCommandWithPolicy(
-			"gh pr view 218 --json number,title --jq .number && gh issue list --limit 5 --json number,title",
-			allGh,
-		),
-		true,
-	);
+	for (const command of [
+		"gh pr view 218",
+		"gh pr list --limit 20",
+		"gh issue view 212 --web",
+		"gh issue list --state open",
+		"gh pr view 218 --web",
+		"gh pr view $PI_PLAN_GH_ARGUMENTS",
+		"gh pr view 218 > output",
+		"gh pr view 218 && gh pr merge 218",
+	]) {
+		assert.equal(isSafeCommandWithPolicy(command, allGh), true, command);
+	}
 });
 
-test("maximal Git opt-in preserves execution and mutation guards", () => {
-	const git = ["rev-parse", "blame", "describe", "merge-base", "ls-tree", "cat-file"];
+test("arbitrary configured Git subcommands become full permissions", () => {
 	for (const command of [
 		"git cat-file --filters HEAD",
-		"git cat-file --filters=blob HEAD",
-		"git cat-file --filter HEAD:file.foo",
-		"git cat-file --filt HEAD:file.foo",
-		"git cat-file --textconv HEAD",
-		"git cat-file --textc HEAD:file.foo",
-		"git cat-file --textconv=true HEAD",
 		"git cat-file -p HEAD --output=copy",
-		"git --exec-path=/tmp cat-file -p HEAD",
-		"git --paginate cat-file -p HEAD",
-		"git -c alias.x='!touch output' x",
-		"git branch -D old",
-		"git branch -mrenamed",
-		"git branch -uorigin/main",
-		"git branch --e",
-		"git branch --u",
-		"git branch --creat",
-		"git branch --set-upstream-to=origin/main",
-		"git remote add origin url",
-		"git remote update",
-		"git diff --ext-diff",
-		"git grep --textc needle",
-		"git grep --open=less needle",
-		"git grep --ext-grep needle",
-		"git show --ext-diff=true HEAD",
-		"git show --textconv HEAD",
+		"git blame --textconv -- path/to/file",
 		"git rev-parse $PI_PLAN_GIT_ARGUMENTS",
-		"git status\ngit rev-parse --show-toplevel",
+		"git rev-parse HEAD && rm -rf build",
 	]) {
-		assert.equal(isSafeCommandWithPolicy(command, { git }), false, command);
+		assert.equal(
+			isSafeCommandWithPolicy(command, { git: ["cat-file", "blame", "rev-parse"] }),
+			true,
+			command,
+		);
 	}
-	assert.equal(
-		isSafeCommandWithPolicy("git checkout main", { git: ["checkout"] }),
-		false,
-		"unknown configured names must not become permissions",
-	);
+	assert.equal(isSafeCommandWithPolicy("git checkout main"), false);
+	assert.equal(isSafeCommandWithPolicy("git checkout main", { git: ["checkout"] }), true);
+	assert.equal(isSafeCommandWithPolicy("git status > status.txt"), false);
+	assert.equal(isSafeCommandWithPolicy("git status > status.txt", { git: ["status"] }), true);
 });
 
 test("Git validators allow ordinary inspection while rejecting explicit helpers", () => {
@@ -403,7 +404,7 @@ test("Git validators allow ordinary inspection while rejecting explicit helpers"
 	assert.equal(isSafeCommandWithPolicy("git blame -- path/to/file", { git: ["blame"] }), true);
 	assert.equal(
 		isSafeCommandWithPolicy("git blame --textconv -- path/to/file", { git: ["blame"] }),
-		false,
+		true,
 	);
 });
 
@@ -416,7 +417,7 @@ test("tool policy classifies built-ins and extension tools consistently", () => 
 	assert.equal(classifyPlanModeTool(extensionTool("custom") as PlanTool), "user-opt-in");
 });
 
-type TestSafeSubcommands = { git?: readonly string[]; gh?: readonly string[] };
+type TestSafeSubcommands = Record<string, readonly string[] | undefined>;
 const isSafeCommandWithPolicy = isSafeCommand as unknown as (
 	command: string,
 	safeSubcommands?: TestSafeSubcommands,

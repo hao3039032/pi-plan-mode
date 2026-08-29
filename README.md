@@ -12,7 +12,7 @@ Use a Codex-like `/plan` mode to explore a codebase, resolve important questions
 - Reviews the complete plan before implementation, export, save, further planning, or discard.
 - Implements in the planning session or a fresh linked session with the approved plan.
 - Restores Plan state and one saved plan across resume and compaction.
-- Configures the Plan tool allowlist, export path, plan reinjection, shortcut, and thinking level.
+- Configures the Plan tool allowlist, reviewed shell commands, user-trusted subcommands, export path, plan reinjection, shortcut, and thinking level.
 - Publishes statusline state and cooperates anonymously with Workflow Mutex Protocol v1 participants.
 
 ## 📦 Install
@@ -144,6 +144,7 @@ Use canonical cmdlet names because PowerShell aliases are intentionally outside 
 A rejected parsed command list or pipeline identifies its first blocked command segment; malformed or unsupported shell syntax reports the complete submitted input instead.
 Tests and builds may still write ignored caches or build artifacts and may execute project-defined hooks; enable or invoke them only when the repository is trusted.
 Both limited-shell policies reduce risk but do not provide an OS sandbox or confidentiality boundary.
+A configured `safeSubcommands` match bypasses both policies completely, so use it only when you intend to trust the entire submitted shell command.
 
 ## 🧭 Planning and implementation
 
@@ -330,8 +331,10 @@ The shortcut is disabled when `toggleShortcut` is omitted.
   "implementationPlanRetention": "clear-on-start",
   "defaultPlanExportPath": "PLAN.md",
   "safeSubcommands": {
-    "git": ["status", "log", "rev-parse", "blame"],
-    "gh": ["pr view", "pr list", "issue view", "issue list"]
+    "git": ["rev-parse", "blame"],
+    "gh": ["pr view", "issue list"],
+    "kubectl": ["get", "apply"],
+    "npm": ["run inspect-custom"]
   },
   "toggleShortcut": "<your_key>"
 }
@@ -405,63 +408,32 @@ Avoid values that conflict with editor shortcuts.
 
 ### Safe shell subcommands
 
-`safeSubcommands` adds reviewed command validators to limited `bash` and `powershell`; it is not a raw shell allowlist.
-Only the following exact values are accepted:
-
-- `git`: `status`, `log`, `diff`, `show`, `branch`, `remote`, `ls-files`, `grep`, `rev-parse`, `blame`, `describe`, `merge-base`, `ls-tree`, and `cat-file`.
-- `gh`: `pr view`, `pr list`, `issue view`, and `issue list`.
-
-The first eight Git validators are built in and remain enabled when omitted, so listing them is valid but redundant.
-The other six Git validators and every `gh` path require an explicit opt-in.
-Git entries select one exact subcommand; `gh` entries select one exact two-word path, so `"pr view"` never enables `pr merge`, `pr close`, or `pr edit`.
+`safeSubcommands` maps any command prefix to subcommand prefixes that the user chooses to trust completely in limited `bash` and `powershell`.
+For example, `"kubectl": ["get", "apply"]` trusts commands beginning with `kubectl get` or `kubectl apply`, while `"npm": ["run inspect-custom"]` trusts commands beginning with `npm run inspect-custom`.
+Command keys and subcommand entries are trimmed and must be non-empty strings.
+Matches are literal and case-sensitive after leading whitespace in the submitted command is ignored.
+A match requires the complete `<command> <subcommand>` prefix followed by whitespace, a shell control operator, or the end of the submitted command, so `"kubectl": ["apply"]` does not match `kubectl applies`.
+Duplicate values and command keys that become equal after trimming are merged in first-seen order.
 Omitted `safeSubcommands`, an empty object, and empty arrays preserve the default policy.
-Duplicate values are removed in first-seen order.
 
-With the example configuration above, commands such as these are accepted:
+When a configured prefix matches, Plan mode permits the complete submitted command without parsing or applying any command, argument, mutation, chain, redirect, expansion, substitution, multiline, or PowerShell syntax checks.
+For example, `"kubectl": ["apply"]` also permits `kubectl apply -f deployment.yaml && rm -rf build`.
+Likewise, `"gh": ["pr view"]` permits `gh pr view 218 --web`, `gh pr view 218 > pr.txt`, and any trailing shell content.
+The setting therefore delegates the complete shell decision to the user and can allow arbitrary code execution with Pi's permissions.
+It is not a sandbox, confirmation gate, or read-only guarantee.
+Choose entries that are as specific as your workflow permits, and configure them only for commands and repositories you fully trust.
 
-```bash
-git -C . status --short
-git rev-parse --show-toplevel
-git blame -- src/plan-mode.ts
-git diff --cached
-git show --stat --oneline HEAD
-git log -p -1 HEAD -- src/plan-mode.ts
-git -C . diff --check
-gh pr view 218 --json number,title,state
-gh issue list --state open --json number,title,state
-```
-
-The command-specific validators still reject unsafe forms, including:
-
-```bash
-git -C
-git -C packages/pi-plan-mode status --short
-git -C packages -C .. status --short
-git -c core.fsmonitor=false -C . status --short
-git -C . checkout main
-git blame --textconv -- src/plan-mode.ts
-git cat-file --filters HEAD
-git diff --ext-diff
-git log --show-signature -1
-git remote show origin
-git show --textconv HEAD
-gh pr merge 218
-gh pr view 218
-gh pr view 218 --web
-gh pr view 218 > pr.txt
-gh pr list --json number,title && gh pr merge 218
-```
-
-Redirects, shell expansion and substitution, explicit pager or browser requests, explicit external diff/textconv/filter/signature helpers, output flags, malformed command layouts, and any chain containing an unsafe segment fail closed.
+Commands that do not match still use the built-in fail-closed reviewed policy.
+That default policy includes Git `status`, `log`, `diff`, `show`, `branch`, `remote`, `ls-files`, and `grep`, with command-specific argument checks.
+It rejects output and input redirects, shell expansion and substitution, explicit pager or browser requests, explicit external diff, textconv, filter, or signature helpers, mutating flags, malformed command layouts, and any parsed chain containing an unsafe segment.
 Read-dominant Git validators accept ordinary inspection flags without requiring `--no-textconv` or `--no-ext-diff`; Git may therefore invoke a helper configured by the user or trusted repository even when the command does not request one explicitly.
 Use the negative flags when you want to suppress those configured helpers.
-Mixed read/write surfaces remain narrower: use `git remote show -n` to avoid invoking a transport helper, while mutating `branch` and `remote` forms remain blocked.
-GitHub CLI read paths require `--json <fields>` output so Plan mode does not rely on `GH_PAGER`, `PAGER`, or gh pager configuration.
-Unknown `safeSubcommands` keys or values, non-array values, and non-string entries invalidate the entire settings file and trigger the normal warning/default fallback on session start.
+Mixed read/write surfaces remain narrower: use `git remote show -n` to avoid invoking a transport helper, while mutating `branch` and `remote` forms remain blocked unless explicitly trusted through `safeSubcommands`.
 
-Read-only does not mean private: Git inspection can expose repository history and tracked secrets, while `gh` queries can expose remote repository, pull request, and issue data available to your authenticated account.
-A `git -C <path>` inspection is accepted only when the path keeps Git in Pi's current working directory.
-The policy reduces accidental mutation and cross-repository executable configuration; it is not a sandbox or a confidentiality boundary.
+Read-only does not mean private: Git inspection can expose repository history and tracked secrets, while configured commands can expose or modify any data available to Pi's process.
+A built-in-policy `git -C <path>` inspection is accepted only when the path keeps Git in Pi's current working directory.
+The default policy reduces accidental mutation and cross-repository executable configuration; configured `safeSubcommands` bypass that protection.
+A non-object `safeSubcommands`, empty command or subcommand string, non-array value, or non-string entry invalidates the entire settings file and triggers the normal warning/default fallback on session start.
 
 ### Thinking level
 

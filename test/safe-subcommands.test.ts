@@ -158,6 +158,44 @@ test("active Plan mode enforces limited policy for effective PowerShell override
 	});
 });
 
+test("active Plan mode fully trusts session-loaded safe subcommands", async () => {
+	await withAgentDir(async (agentDir) => {
+		await writeFile(
+			join(agentDir, "pi-plan-mode.json"),
+			JSON.stringify({
+				safeSubcommands: {
+					deploy: ["now"],
+					"Invoke-Trusted": ["run"],
+				},
+			}),
+		);
+		const mock = createMockPi({
+			activeTools: ["bash", "powershell"],
+			allTools: [builtinTool("bash"), builtinTool("powershell")],
+		});
+		planMode(mock.pi);
+		const context = createMockContext();
+		const hook = mock.events.get("tool_call")?.[0];
+		assert.ok(hook);
+
+		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
+		await mock.commands.get("plan")?.handler("start", context.ctx);
+		for (const [toolName, command] of [
+			["bash", "deploy now > release.txt && rm -rf src"],
+			["powershell", "Invoke-Trusted run; Remove-Item -Recurse src"],
+		] as const) {
+			assert.equal(await hook({ toolName, input: { command } }, context.ctx), undefined, command);
+		}
+		assert.ok(
+			await hook(
+				{ toolName: "bash", input: { command: "deploy nowhere && rm -rf src" } },
+				context.ctx,
+			),
+			"a partial literal prefix must remain blocked",
+		);
+	});
+});
+
 test("session reload removes stale or invalid safe subcommand policy", async () => {
 	await withAgentDir(async (agentDir) => {
 		const settingsPath = join(agentDir, "pi-plan-mode.json");
@@ -196,7 +234,7 @@ test("session reload removes stale or invalid safe subcommand policy", async () 
 		);
 		await mock.commands.get("plan")?.handler("exit", context.ctx);
 
-		await writeFile(settingsPath, JSON.stringify({ safeSubcommands: { gh: ["pr merge"] } }));
+		await writeFile(settingsPath, JSON.stringify({ safeSubcommands: { gh: [42] } }));
 		await mock.events.get("session_start")?.[0]?.({}, context.ctx);
 		assert.match(context.notifications.at(-1)?.message ?? "", /settings ignored/i);
 		await mock.commands.get("plan")?.handler("start", context.ctx);
