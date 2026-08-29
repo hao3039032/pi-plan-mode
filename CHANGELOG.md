@@ -1,5 +1,12 @@
 # @narumitw/pi-plan-mode
 
+## 0.56.0
+
+### Minor Changes
+
+- e230348: Allow narrowly validated local `hostname`, `tasklist`, `Get-Process`, and `Get-Service` inspections in Plan mode by default.
+- 708cc2e: Let users add arbitrary `safeSubcommands` entries and treat every configured command-subcommand prefix as fully trusted for Plan-mode Bash and PowerShell calls.
+
 ## 0.55.3
 
 ### Patch Changes
