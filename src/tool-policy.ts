@@ -147,19 +147,25 @@ export function findBlockedCommandSegment(
 	command: string,
 	safeSubcommands: SafeSubcommands = {},
 	workingDirectory?: string,
+	platform: NodeJS.Platform = process.platform,
 ): string | undefined {
 	if (matchesConfiguredSafeSubcommand(command, safeSubcommands)) return undefined;
 	const segments = splitShellSegments(command);
 	if (!segments || segments.length === 0) return command.trim() || "(empty command)";
-	return segments.find((segment) => !isSafeSegment(segment, safeSubcommands, workingDirectory));
+	return segments.find(
+		(segment) => !isSafeSegment(segment, safeSubcommands, workingDirectory, platform),
+	);
 }
 
 export function isSafeCommand(
 	command: string,
 	safeSubcommands: SafeSubcommands = {},
 	workingDirectory?: string,
+	platform: NodeJS.Platform = process.platform,
 ) {
-	return findBlockedCommandSegment(command, safeSubcommands, workingDirectory) === undefined;
+	return (
+		findBlockedCommandSegment(command, safeSubcommands, workingDirectory, platform) === undefined
+	);
 }
 
 export function findBlockedPowerShellCommandSegment(
@@ -257,6 +263,8 @@ function isSafePowerShellSegment(
 	if (!command) return false;
 	const args = tokens.slice(1);
 	if (READ_ONLY_POWERSHELL_COMMANDS.has(command)) return true;
+	if (command === "get-process") return isSafeGetProcessArguments(args);
+	if (command === "get-service") return isSafeGetServiceArguments(args);
 	if (command !== "git" && command !== "gh") return false;
 	return isSafeStructuredCommand(command, args, safeSubcommands, workingDirectory);
 }
@@ -359,7 +367,8 @@ function splitShellSegments(command: string): string[] | undefined {
 function isSafeSegment(
 	segment: string,
 	safeSubcommands: SafeSubcommands,
-	workingDirectory?: string,
+	workingDirectory: string | undefined,
+	platform: NodeJS.Platform,
 ) {
 	if (hasShellExpansion(segment) || /(^|\s)[A-Za-z_][A-Za-z0-9_]*=/.test(segment)) {
 		return false;
@@ -370,6 +379,8 @@ function isSafeSegment(
 	if (!command || MUTATING_COMMANDS.has(command)) return false;
 	const args = tokens.slice(1);
 	if (!hasSafeArguments(command, args)) return false;
+	if (command === "hostname") return args.length === 0;
+	if (command === "tasklist") return platform === "win32" && isSafeTasklistArguments(args);
 	if (READ_ONLY_COMMANDS.has(command)) return true;
 	return isSafeStructuredCommand(command, args, safeSubcommands, workingDirectory);
 }
@@ -597,6 +608,72 @@ function isSafeStructuredCommand(
 		);
 	}
 	return false;
+}
+
+function isSafeTasklistArguments(args: string[]) {
+	for (let index = 0; index < args.length; index += 1) {
+		const argument = args[index]?.toLowerCase();
+		if (["/v", "/nh", "/svc"].includes(argument ?? "")) continue;
+		if (argument === "/fo") {
+			const format = args[index + 1]?.toLowerCase();
+			if (!format || !["table", "list", "csv"].includes(format)) return false;
+			index += 1;
+			continue;
+		}
+		if (argument === "/fi") {
+			const filter = args[index + 1];
+			if (!filter || filter.startsWith("/")) return false;
+			index += 1;
+			continue;
+		}
+		if (argument === "/m") {
+			const module = args[index + 1];
+			if (module && !module.startsWith("/")) index += 1;
+			continue;
+		}
+		return false;
+	}
+	return true;
+}
+
+function isSafeGetProcessArguments(args: string[]) {
+	return hasSafePowerShellQueryArguments(
+		args,
+		new Set(["-module", "-fileversioninfo", "-includeusername"]),
+		new Set(["-name", "-id"]),
+	);
+}
+
+function isSafeGetServiceArguments(args: string[]) {
+	return hasSafePowerShellQueryArguments(
+		args,
+		new Set(["-dependentservices", "-requiredservices"]),
+		new Set(["-name", "-displayname", "-include", "-exclude"]),
+	);
+}
+
+function hasSafePowerShellQueryArguments(
+	args: string[],
+	switches: ReadonlySet<string>,
+	valueOptions: ReadonlySet<string>,
+) {
+	let positionalValues = 0;
+	for (let index = 0; index < args.length; index += 1) {
+		const argument = args[index];
+		const normalized = argument?.toLowerCase();
+		if (!argument || !normalized) return false;
+		if (!argument.startsWith("-")) {
+			positionalValues += 1;
+			if (positionalValues > 1) return false;
+			continue;
+		}
+		if (switches.has(normalized)) continue;
+		if (!valueOptions.has(normalized)) return false;
+		const value = args[index + 1];
+		if (!value || value.startsWith("-")) return false;
+		index += 1;
+	}
+	return true;
 }
 
 function isSafeGitCommand(
