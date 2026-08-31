@@ -295,6 +295,7 @@ Saved plans and ordinary implementation after Plan handoff do not hold the group
 Every inactive start performs one final synchronous admission after asynchronous preflight and before changing Plan state, persistence, prompts, tools, thinking level, queues, or status.
 If another participant is active, TUI and RPC show an anonymous warning that another workflow is active.
 Print and JSON direct routes throw the same anonymous error before mutation.
+
 Launch-menu, selected-tool, shortcut, active-implementation **Start a new plan**, and restored activation use the same admission boundary.
 A rejected selected-tool launch does not save its draft choices.
 
