@@ -1,5 +1,12 @@
 # 🧭 pi-plan-mode — Plan Before Pi Edits Code
 
+> **Fork note.** This is a fork of [@narumitw/pi-plan-mode](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-plan-mode) (MIT), split from the upstream monorepo with its history.
+> The only behavior change: tools you explicitly select with `defaultPlanTools` or `/plan tools` are admitted when they become active **during** a Plan workflow (for example pi-web-access tools enabled through `web_enable`), instead of staying blocked until the next workflow. The allowlist itself never grows beyond your selection; automatic policy, inactive tools, and blocked built-ins behave as upstream.
+>
+> Install: `pi install git:github.com/hao3039032/pi-plan-mode` (remove `npm:@narumitw/pi-plan-mode` first).
+>
+> Sync with upstream: clone `narumiruna/pi-extensions`, re-apply the fork commit on top of it, run the plan-mode tests there, then `git subtree split --prefix=packages/pi-plan-mode` and merge the result here. Tests in `test/` rely on the upstream monorepo harness.
+
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-plan-mode)](https://www.npmjs.com/package/@narumitw/pi-plan-mode) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Use a Codex-like `/plan` mode to explore a codebase, resolve important questions, and approve an implementation-ready plan before Pi edits files.
