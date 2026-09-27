@@ -671,7 +671,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
           : `Plan mode blocks tool '${event.toolName}' because it is registered but inactive. Activate it before starting the next Plan workflow.`,
       };
     }
-    if (!allowedToolNames.has(event.toolName)) {
+    if (!allowedToolNames.has(event.toolName) && !admitLateActivatedExplicitTool(event.toolName, ctx)) {
       return {
         block: true,
         reason: workflowDesiredToolNames().has(event.toolName)
@@ -1512,6 +1512,22 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     pendingWorkflowToolPolicy = undefined;
     if (policyChanged) persistState();
     updateUi(ctx);
+  }
+
+  // Fork: admit an explicitly selected tool that became active after the workflow froze its policy,
+  // e.g. pi-web-access tools activated through web_enable. Callers have already verified that the
+  // tool is registered, active, and not blocked by the built-in policy.
+  function admitLateActivatedExplicitTool(toolName: string, ctx: ExtensionContext) {
+    const policy = state.workflowToolPolicy;
+    if (policy?.kind !== "explicit" || !policy.desiredNames?.includes(toolName)) return false;
+    workflowAllowedToolNames = [...new Set([...(workflowAllowedToolNames ?? []), toolName])];
+    state = {
+      ...state,
+      workflowToolPolicy: { ...policy, allowedNames: [...new Set([...policy.allowedNames, toolName])] },
+    };
+    persistState();
+    updateUi(ctx);
+    return true;
   }
 
   function toolPolicySelectionIsExplicit() {

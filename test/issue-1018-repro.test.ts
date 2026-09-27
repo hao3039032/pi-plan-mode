@@ -148,12 +148,13 @@ test("configured Plan-blocked built-ins remain denied", async () => {
   assert.match(result?.reason ?? "", /mutating tool/u);
 });
 
-test("registration after first context waits for the next workflow", async () => {
+// Fork: configured tools registered after the first context are admitted within the same workflow.
+test("registration after first context is admitted within the workflow", async () => {
   const fixture = await startPlan({ configured: [LATE_TOOL] });
   await runContext(fixture);
   registerLateTool(fixture);
   await runContext(fixture);
-  assert.equal((await callTool(fixture, LATE_TOOL))?.block, true);
+  assert.equal(await callTool(fixture, LATE_TOOL), undefined);
 
   await fixture.mock.commands.get("plan")?.handler("exit", fixture.context.ctx);
   await fixture.mock.commands.get("plan")?.handler("start", fixture.context.ctx);
@@ -161,7 +162,8 @@ test("registration after first context waits for the next workflow", async () =>
   assert.equal(await callTool(fixture, LATE_TOOL), undefined);
 });
 
-test("a resolved allowlist stays frozen when its active workflow is restored", async () => {
+// Fork: a restored workflow admits configured tools that became available later.
+test("a restored workflow admits configured tools registered later", async () => {
   const fixture = await startPlan({ configured: [LATE_TOOL] });
   await runContext(fixture);
   const resolvedState = fixture.mock.entries.at(-1)?.data as
@@ -191,7 +193,7 @@ test("a resolved allowlist stays frozen when its active workflow is restored", a
     { toolName: LATE_TOOL, input: {} },
     replacement.ctx,
   )) as { block?: boolean } | undefined;
-  assert.equal(result?.block, true);
+  assert.equal(result, undefined);
 });
 
 test("restoration revalidates a frozen allowed name after late registration", async () => {

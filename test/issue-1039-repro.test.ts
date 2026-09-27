@@ -82,10 +82,8 @@ test("issue 1039: denied tools report inactive, unavailable, frozen, and blocked
     allTools: [builtinTool("read"), extensionTool(CUSTOM_TOOL)],
   });
   late.mock.rawPi.setActiveTools(["read", CUSTOM_TOOL, "plan_mode_question", "plan_mode_complete"]);
-  assert.deepEqual(await callTool(late, CUSTOM_TOOL), {
-    block: true,
-    reason: `Plan mode blocks tool '${CUSTOM_TOOL}' because it was not available when the active Plan workflow froze its tool policy. Exit Plan mode, then start again after the tool is active.`,
-  });
+  // Fork: explicitly selected tools activated after the freeze are admitted on first use.
+  assert.equal(await callTool(late, CUSTOM_TOOL), undefined);
 
   const lateAutomatic = await startPlan({
     activeTools: ["read"],
