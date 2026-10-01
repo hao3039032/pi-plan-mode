@@ -16,6 +16,8 @@ import {
   configuredImplementationThinkingLevel,
   configuredPlanExportPath,
   configuredPlanModeToggleShortcut,
+  configuredPlanOutputDir,
+  configuredPlanSandbox,
   IMPLEMENTATION_PLAN_RETENTIONS,
   IMPLEMENTATION_THINKING_LEVELS,
   normalizeKeyId,
@@ -51,7 +53,16 @@ export interface PlanModeSettingsMenuOptions {
   onSaved(settings: PlanModeSettings): void;
 }
 
-type Screen = "settings" | "tools" | "implementation-model" | "export" | "shortcut";
+type Screen =
+  | "settings"
+  | "tools"
+  | "implementation-model"
+  | "export"
+  | "shortcut"
+  | "plan-output"
+  | "sandbox-write"
+  | "sandbox-deny-read"
+  | "sandbox-domains";
 type Action =
   | "set-thinking"
   | "open-tools"
@@ -64,7 +75,15 @@ type Action =
   | "open-export"
   | "set-export"
   | "open-shortcut"
-  | "set-shortcut";
+  | "set-shortcut"
+  | "open-plan-output"
+  | "set-plan-output"
+  | "open-sandbox-write"
+  | "set-sandbox-write"
+  | "open-sandbox-deny-read"
+  | "set-sandbox-deny-read"
+  | "open-sandbox-domains"
+  | "set-sandbox-domains";
 
 export async function showPlanModeSettings(
   ctx: ExtensionContext,
@@ -165,6 +184,34 @@ export async function showPlanModeSettings(
                   currentValue: configuredPlanModeToggleShortcut(state.settings) ?? "none",
                   action: "open-shortcut",
                 },
+                {
+                  id: "planOutputDir",
+                  label: "Plan output dir",
+                  description: "Directory where completed plans are written as Markdown (sandbox-writable).",
+                  currentValue: configuredPlanOutputDir(state.settings) ?? "plans",
+                  action: "open-plan-output",
+                },
+                {
+                  id: "sandboxWrite",
+                  label: "Sandbox write paths",
+                  description: "Extra writable paths inside the srt sandbox, comma-separated (always includes /tmp and the plan output dir).",
+                  currentValue: sandboxListValue(configuredPlanSandbox(state.settings).allowWrite),
+                  action: "open-sandbox-write",
+                },
+                {
+                  id: "sandboxDenyRead",
+                  label: "Sandbox deny-read",
+                  description: "Extra read-denied paths, comma-separated, added to the built-in secret defaults.",
+                  currentValue: sandboxListValue(configuredPlanSandbox(state.settings).denyRead),
+                  action: "open-sandbox-deny-read",
+                },
+                {
+                  id: "sandboxDomains",
+                  label: "Sandbox network",
+                  description: "Allowed network domains in the srt sandbox, comma-separated. Empty denies all network.",
+                  currentValue: sandboxListValue(configuredPlanSandbox(state.settings).allowedDomains),
+                  action: "open-sandbox-domains",
+                },
               ],
             },
       tools: ({ state }) => ({
@@ -231,6 +278,54 @@ export async function showPlanModeSettings(
         ],
         placeholder: configuredPlanModeToggleShortcut(state.settings) ?? "",
         action: "set-shortcut",
+        hint: "back",
+      }),
+      "plan-output": ({ state }) => ({
+        kind: "input",
+        title: "Plan output directory",
+        lines: [
+          `Configured: ${configuredPlanOutputDir(state.settings) ?? "plans (default)"}`,
+          "Completed plans are written here as Markdown and the sandbox allows writes to it during planning.",
+          "Relative paths resolve against the Pi working directory. Submit an empty value to reset to plans.",
+        ],
+        placeholder: configuredPlanOutputDir(state.settings) ?? "plans",
+        action: "set-plan-output",
+        hint: "back",
+      }),
+      "sandbox-write": ({ state }) => ({
+        kind: "input",
+        title: "Sandbox write paths",
+        lines: [
+          `Configured: ${sandboxListValue(configuredPlanSandbox(state.settings).allowWrite)}`,
+          "/tmp and the plan output directory are always writable; add extra paths, comma-separated.",
+          "Submit an empty value to keep only the defaults.",
+        ],
+        placeholder: sandboxListValue(configuredPlanSandbox(state.settings).allowWrite),
+        action: "set-sandbox-write",
+        hint: "back",
+      }),
+      "sandbox-deny-read": ({ state }) => ({
+        kind: "input",
+        title: "Sandbox deny-read paths",
+        lines: [
+          `Configured: ${sandboxListValue(configuredPlanSandbox(state.settings).denyRead)}`,
+          "Added to the built-in secret-path defaults (~/.ssh, ~/.aws, **/.env, ...), comma-separated.",
+          "Submit an empty value to keep only the defaults.",
+        ],
+        placeholder: sandboxListValue(configuredPlanSandbox(state.settings).denyRead),
+        action: "set-sandbox-deny-read",
+        hint: "back",
+      }),
+      "sandbox-domains": ({ state }) => ({
+        kind: "input",
+        title: "Sandbox network domains",
+        lines: [
+          `Configured: ${sandboxListValue(configuredPlanSandbox(state.settings).allowedDomains)}`,
+          "Allowed domains for sandboxed shell commands, comma-separated (wildcards like *.npmjs.org).",
+          "Empty denies all network access inside the sandbox.",
+        ],
+        placeholder: sandboxListValue(configuredPlanSandbox(state.settings).allowedDomains),
+        action: "set-sandbox-domains",
         hint: "back",
       }),
     },
@@ -310,6 +405,70 @@ export async function showPlanModeSettings(
         return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
       },
       "open-shortcut": async () => ({ kind: "to", screen: "shortcut" }),
+      "open-plan-output": async () => ({ kind: "to", screen: "plan-output" }),
+      "set-plan-output": async ({ ctx: actionCtx, value, signal }) => {
+        const planOutputDir = value?.trim() || null;
+        const result = await savePatch(
+          actionCtx,
+          { planOutputDir },
+          signal,
+          planOutputDir
+            ? `Plan output directory: ${safeTerminalText(planOutputDir)}.`
+            : "Plan output directory reset to plans.",
+        );
+        return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
+      },
+      "open-sandbox-write": async () => ({ kind: "to", screen: "sandbox-write" }),
+      "set-sandbox-write": async ({ ctx: actionCtx, state, value, signal }) => {
+        const parsed = parseSandboxList(value);
+        const result = await savePatch(
+          actionCtx,
+          {
+            planSandbox: parsed
+              ? { ...configuredPlanSandbox(state.settings), allowWrite: parsed }
+              : planSandboxWithout(state.settings, "allowWrite"),
+          },
+          signal,
+          parsed
+            ? `Sandbox write paths: ${safeTerminalText(parsed.join(", "))}.`
+            : "Sandbox write paths reset to defaults (/tmp + plan output dir).",
+        );
+        return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
+      },
+      "open-sandbox-deny-read": async () => ({ kind: "to", screen: "sandbox-deny-read" }),
+      "set-sandbox-deny-read": async ({ ctx: actionCtx, state, value, signal }) => {
+        const parsed = parseSandboxList(value);
+        const result = await savePatch(
+          actionCtx,
+          {
+            planSandbox: parsed
+              ? { ...configuredPlanSandbox(state.settings), denyRead: parsed }
+              : planSandboxWithout(state.settings, "denyRead"),
+          },
+          signal,
+          parsed
+            ? `Sandbox deny-read paths: ${safeTerminalText(parsed.join(", "))}.`
+            : "Sandbox deny-read paths reset to the built-in defaults.",
+        );
+        return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
+      },
+      "open-sandbox-domains": async () => ({ kind: "to", screen: "sandbox-domains" }),
+      "set-sandbox-domains": async ({ ctx: actionCtx, state, value, signal }) => {
+        const parsed = parseSandboxList(value);
+        const result = await savePatch(
+          actionCtx,
+          {
+            planSandbox: parsed
+              ? { ...configuredPlanSandbox(state.settings), allowedDomains: parsed }
+              : planSandboxWithout(state.settings, "allowedDomains"),
+          },
+          signal,
+          parsed
+            ? `Sandbox network domains: ${safeTerminalText(parsed.join(", "))}.`
+            : "Sandbox network: all domains denied.",
+        );
+        return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
+      },
       "set-shortcut": async ({ ctx: actionCtx, value, signal }) => {
         const raw = value?.trim() || null;
         if (raw && !normalizeKeyId(raw)) {
@@ -523,6 +682,30 @@ function defaultToolItems(
 
 function explicitToolNames(tools: readonly ToolInfo[], configured: string[] | undefined) {
   return configured === undefined ? defaultPlanModeToolNames([...tools], undefined) : [...configured];
+}
+
+function sandboxListValue(values: string[] | undefined) {
+  return values && values.length > 0 ? safeTerminalText(values.join(", ")) : "(defaults)";
+}
+
+function parseSandboxList(value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const parsed = trimmed
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return parsed.length > 0 ? parsed : undefined;
+}
+
+function planSandboxWithout(
+  settings: PlanModeSettings,
+  key: "allowWrite" | "denyRead" | "allowedDomains",
+): PlanModeSettingsPatch["planSandbox"] {
+  const configured = configuredPlanSandbox(settings);
+  const remaining = { ...configured };
+  delete remaining[key];
+  return Object.keys(remaining).length > 0 ? remaining : null;
 }
 
 function terminalToolName(value: string) {

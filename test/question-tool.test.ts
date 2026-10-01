@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test } from "vitest";
-import planMode, { normalizePlanModeQuestionParams } from "../src/plan-mode.js";
+import { normalizePlanModeQuestionParams } from "../src/plan-mode.js";
+import { planMode } from "./support.js";
 import {
   answerPlanModeQuestions,
   askPlanModeQuestions,

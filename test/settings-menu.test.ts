@@ -499,6 +499,10 @@ test("RPC Settings changes retention and export destination with the same flat n
           "Fresh thinking (same as plan)",
           "Export destination (PLAN.md)",
           "Plan mode shortcut (none)",
+          "Plan output dir (plans)",
+          "Sandbox write paths ((defaults))",
+          "Sandbox deny-read ((defaults))",
+          "Sandbox network ((defaults))",
           "Back",
         ],
         response: "Plan reinjection (Off — conversation history only)",
@@ -513,6 +517,10 @@ test("RPC Settings changes retention and export destination with the same flat n
           "Fresh thinking (same as plan)",
           "Export destination (PLAN.md)",
           "Plan mode shortcut (none)",
+          "Plan output dir (plans)",
+          "Sandbox write paths ((defaults))",
+          "Sandbox deny-read ((defaults))",
+          "Sandbox network ((defaults))",
           "Back",
         ],
         response: "Export destination (PLAN.md)",
@@ -532,6 +540,10 @@ test("RPC Settings changes retention and export destination with the same flat n
           "Fresh thinking (same as plan)",
           "Export destination (rpc/PLAN.md)",
           "Plan mode shortcut (none)",
+          "Plan output dir (plans)",
+          "Sandbox write paths ((defaults))",
+          "Sandbox deny-read ((defaults))",
+          "Sandbox network ((defaults))",
           "Back",
         ],
         response: undefined,
@@ -560,6 +572,10 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
         "Fresh thinking (same as plan)",
         "Export destination (PLAN.md)",
         "Plan mode shortcut (none)",
+        "Plan output dir (plans)",
+        "Sandbox write paths ((defaults))",
+        "Sandbox deny-read ((defaults))",
+        "Sandbox network ((defaults))",
         "Back",
       ],
       response: undefined,
@@ -597,4 +613,80 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
     assert.deepEqual(saved, []);
     assert.deepEqual(notifications, []);
   });
+});
+
+test("Plan output dir and sandbox rows save through the settings menu", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-settings-sandbox-"));
+  const settingsPath = join(directory, "pi-plan-mode.json");
+  try {
+    const rpc = createRpcHarness([
+      {
+        kind: "select",
+        options: [
+          "Plan thinking (inherit)",
+          "Plan policy tools (Automatic safe built-ins)",
+          "Plan reinjection (Off — conversation history only)",
+          "Fresh model (same as plan)",
+          "Fresh thinking (same as plan)",
+          "Export destination (PLAN.md)",
+          "Plan mode shortcut (none)",
+          "Plan output dir (plans)",
+          "Sandbox write paths ((defaults))",
+          "Sandbox deny-read ((defaults))",
+          "Sandbox network ((defaults))",
+          "Back",
+        ],
+        response: "Plan output dir (plans)",
+      },
+      { kind: "input", placeholder: "plans", response: "specs" },
+      {
+        kind: "select",
+        options: [
+          "Plan thinking (inherit)",
+          "Plan policy tools (Automatic safe built-ins)",
+          "Plan reinjection (Off — conversation history only)",
+          "Fresh model (same as plan)",
+          "Fresh thinking (same as plan)",
+          "Export destination (PLAN.md)",
+          "Plan mode shortcut (none)",
+          "Plan output dir (specs)",
+          "Sandbox write paths ((defaults))",
+          "Sandbox deny-read ((defaults))",
+          "Sandbox network ((defaults))",
+          "Back",
+        ],
+        response: "Sandbox network ((defaults))",
+      },
+      { kind: "input", placeholder: "(defaults)", response: "api.github.com, *.npmjs.org" },
+      {
+        kind: "select",
+        options: [
+          "Plan thinking (inherit)",
+          "Plan policy tools (Automatic safe built-ins)",
+          "Plan reinjection (Off — conversation history only)",
+          "Fresh model (same as plan)",
+          "Fresh thinking (same as plan)",
+          "Export destination (PLAN.md)",
+          "Plan mode shortcut (none)",
+          "Plan output dir (specs)",
+          "Sandbox write paths ((defaults))",
+          "Sandbox deny-read ((defaults))",
+          "Sandbox network (api.github.com, *.npmjs.org)",
+          "Back",
+        ],
+        response: undefined,
+      },
+    ]);
+    const context = createMockContext({ cwd: directory, mode: "rpc", hasUI: true, ...rpc.ui });
+    const saved: PlanModeSettings[] = [];
+    await showPlanModeSettings(context.ctx, menuOptions(settingsPath, saved));
+    rpc.assertConsumed();
+    assert.equal(saved.at(-1)?.planOutputDir, "specs");
+    assert.deepEqual(saved.at(-1)?.planSandbox?.allowedDomains, ["api.github.com", "*.npmjs.org"]);
+    const written = JSON.parse(await readFile(settingsPath, "utf8")) as Record<string, unknown>;
+    assert.equal(written.planOutputDir, "specs");
+    assert.deepEqual(written.planSandbox, { allowedDomains: ["api.github.com", "*.npmjs.org"] });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

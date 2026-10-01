@@ -17,7 +17,7 @@ import {
 import { type KeyId, setKittyProtocolActive } from "@earendil-works/pi-tui";
 import { createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test, vi } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import * as settingsModule from "../src/settings.js";
 import { createMockContext, createMockPi } from "./support.js";
 
@@ -146,8 +146,23 @@ async function createShortcutFixture(initial: KeyId | undefined) {
       return runner;
     },
     registrations: () => new Map(loader.getExtensions().extensions[0]?.shortcuts),
-    active: () => context.statuses.get("plan-mode") === "plan active",
+    active: () => context.statuses.get("plan-mode") === "plan active (srt)",
     press: (data: string) => editor.handleInput(data),
+    /** Press a shortcut, then drain the async gated start so assertions observe settled state. */
+    async pressToggle(data: string, expectActive?: boolean) {
+      editor.handleInput(data);
+      for (let index = 0; index < 400; index += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (expectActive !== undefined) {
+        await vi.waitFor(
+          () => {
+            assert.equal(context.statuses.get("plan-mode") === "plan active (srt)", expectActive);
+          },
+          { timeout: 2_000, interval: 10 },
+        );
+      }
+    },
     async change(next: KeyId | undefined) {
       reads.length = 0;
       const temporaryPath = join(root, "next.json");
@@ -186,10 +201,10 @@ for (const [name, initial, next] of [
       const startup = f.registrations();
       await f.change(next);
       assert.deepEqual(f.registrations(), startup, "settings reload must not change Pi's registered shortcuts");
-      f.press(INPUT);
+      await f.pressToggle(INPUT, initial !== undefined);
       assert.equal(f.active(), initial !== undefined);
-      if (initial) f.press(INPUT);
-      f.press(NEXT_INPUT);
+      if (initial) await f.pressToggle(INPUT, false);
+      await f.pressToggle(NEXT_INPUT, false);
       assert.equal(f.active(), false);
       // Other settings still reload: the next Plan workflow uses the new thinking default.
       await f.runner.getCommand("plan")?.handler("start", f.runner.createCommandContext());
@@ -200,7 +215,7 @@ for (const [name, initial, next] of [
       assert.deepEqual(f.registrations(), startup);
       await f.reload();
       assert.deepEqual([...f.registrations().keys()], next ? [next] : []);
-      f.press(next === NEXT_KEY ? NEXT_INPUT : INPUT);
+      await f.pressToggle(next === NEXT_KEY ? NEXT_INPUT : INPUT, next !== undefined);
       assert.equal(f.active(), next !== undefined);
     });
   });
@@ -245,9 +260,9 @@ for (const kitty of [false, true]) {
       setKittyProtocolActive(kitty);
       const startup = f.registrations();
       for (let cycle = 0; cycle < 3; cycle += 1) {
-        f.press(INPUT);
+        await f.pressToggle(INPUT, true);
         assert.equal(f.active(), true);
-        f.press(INPUT);
+        await f.pressToggle(INPUT, false);
         assert.equal(f.active(), false);
         await f.runner.emit({ type: "session_tree", newLeafId: null, oldLeafId: null });
         await f.runner.emit({
@@ -283,7 +298,7 @@ test("saving a shortcut in Plan Settings preserves registration until reload", a
     await running;
     assert.deepEqual(f.registrations(), startup);
     assert.match(f.context.notifications.at(-1)?.message ?? "", /saved.*\/reload/i);
-    f.press(INPUT);
+    await f.pressToggle(INPUT, true);
     assert.equal(f.active(), true);
   });
 });

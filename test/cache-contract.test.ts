@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
 interface CapturedRequest {

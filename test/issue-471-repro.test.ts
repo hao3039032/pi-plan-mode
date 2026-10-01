@@ -140,7 +140,7 @@ test("legacy plans obey the completion size bound before restore or readiness", 
     },
     context.ctx,
   );
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.match(context.notifications.at(-1)?.message ?? "", /must not exceed 50000/i);
 });
 
@@ -611,7 +611,7 @@ test("the active-plan menu shows without superseding and cancellation is read-on
 
 test("active-plan menu actions work in TUI and RPC without hidden route changes", async () => {
   for (const scenario of [
-    { mode: "tui", selection: "Start a new plan", expectedStatus: "plan active" },
+    { mode: "tui", selection: "Start a new plan", expectedStatus: "plan active (srt)" },
     { mode: "rpc", selection: "Clear active implementation plan", expectedStatus: undefined },
   ] as const) {
     const mock = createMockPi({ activeTools: ["read", "edit"] });
@@ -654,7 +654,7 @@ test("/plan start supersedes an active implementation without starting a model t
 
   await mock.commands.get("plan")?.handler("start", context.ctx);
 
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.equal(latestState(mock.entries)?.activeImplementation, undefined);
   assert.equal(mock.sentUserMessages.length, sentBeforeStart);
 });
@@ -674,7 +674,7 @@ test("starting a new Plan-mode workflow supersedes the active implementation", a
   const oldHandoff = { role: "user", content: mock.sentUserMessages.at(-1)?.text };
 
   await mock.commands.get("plan")?.handler("design a replacement", context.ctx);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.equal(latestState(mock.entries)?.activeImplementation, undefined);
   const contextHook = mock.events.get("context")?.[0];
   assert.ok(contextHook);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { createModeContractMessage } from "../src/mode-contract.js";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { builtinTool, createMockContext, createMockPi } from "./support.js";
 
 const PLAN = "# Branch-owned plan\n\n1. Restore this branch.";
@@ -69,7 +69,7 @@ test("internal mode contracts cannot be selected as tree navigation targets", as
   );
   assert.deepEqual(blocked, { cancel: true });
   assert.equal(mock.entries.length, stateEntriesBefore);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.match(context.notifications.at(-1)?.message ?? "", /transition markers are internal/u);
 
   const allowed = await beforeTree(
@@ -121,7 +121,7 @@ test("manual tree navigation restores branch-owned mode state without changing t
     }),
   );
   await tree({}, context.ctx);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.equal(mock.thinkingLevel, "medium");
   assert.deepEqual(mock.rawPi.getActiveTools(), BASELINE);
 

@@ -19,6 +19,11 @@ const PLAN_COMMAND_COMPLETIONS: readonly CommandArgumentCompletion[] = [
     label: "tools",
     description: "Choose tools before starting this Plan workflow",
   },
+  {
+    value: "doctor",
+    label: "doctor",
+    description: "Check the srt sandbox and plan output configuration",
+  },
 ];
 
 export function completePlanArguments(argumentPrefix: string): CommandArgumentCompletion[] | null {

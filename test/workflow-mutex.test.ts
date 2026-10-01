@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { AGENT_WORKFLOW_GROUP, WORKFLOW_MUTEX_CHANNEL, WorkflowMutex } from "../src/workflow-mutex.js";
 import { createMockContext, createMockPi } from "./support.js";
 
@@ -286,8 +286,8 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
     const context = createMockContext({ mode, hasUI: true, sessionManager });
     await mock.commands.get("plan")?.handler("", context.ctx);
     assert.ok(launchOptions);
-    launchOptions.start(new AbortController().signal);
-    launchOptions.startWithTools(["read"], new AbortController().signal);
+    await launchOptions.start(new AbortController().signal);
+    await launchOptions.startWithTools(["read"], new AbortController().signal);
     assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", ...PLAN_HELPERS]);
     assert.equal(mock.entries.length, 0);
     assert.equal(context.notifications.length, 2);

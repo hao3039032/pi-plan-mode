@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { createMockContext, createMockPi } from "./support.js";
 
 test("issue 302: history-only implementation stays ordinary context when Plan Mode restarts", async () => {
@@ -34,7 +34,7 @@ test("issue 302: history-only implementation stays ordinary context when Plan Mo
   assert.deepEqual(inactiveContext.messages.slice(1), implementationMessages);
 
   await mock.commands.get("plan")?.handler("start", context.ctx);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "custom", "plan_mode_question", "plan_mode_complete"]);
 
   const beforeStart = mock.events.get("before_agent_start")?.[0];

@@ -1,6 +1,32 @@
 const PLAN_CONTEXT_MARKER = "[CODEX-LIKE PLAN MODE ACTIVE]";
 
-export function buildPlanModePrompt() {
+export interface PlanModePromptSandboxInfo {
+  /** Absolute writable paths inside the sandbox (scratch + plan output directory). */
+  writePaths: string[];
+  /** Directory the agent may draft plan Markdown in. */
+  planOutputDir: string;
+  /** Empty means all network access is denied. */
+  allowedDomains: string[];
+}
+
+export function buildSandboxPromptSection(sandbox: PlanModePromptSandboxInfo) {
+  const network =
+    sandbox.allowedDomains.length > 0
+      ? `allowed only for these domains: ${sandbox.allowedDomains.join(", ")}`
+      : "denied for every domain";
+  return [
+    "## Sandboxed exploration",
+    "",
+    "- Shell commands run inside the Anthropic Sandbox Runtime (srt), an OS-level sandbox. You may run any command freely: pipes, redirects, subshells, variables, scripts — no command allowlist applies.",
+    `- Filesystem: reads are allowed everywhere except denied secret paths; writes are allowed only in: ${sandbox.writePaths.join(", ")}.`,
+    `- Network: ${network}.`,
+    "- A failure like 'Operation not permitted', 'EPERM', or a proxy block is the sandbox boundary. Do not retry the same operation with different syntax; note the constraint in the plan instead.",
+    `- You may draft and iterate the plan as Markdown files in ${sandbox.planOutputDir}/; the user sees updates in the TUI (/plan show). The decision-ready plan itself must still be submitted with plan_mode_complete.`,
+  ].join("\n");
+}
+
+export function buildPlanModePrompt(sandbox?: PlanModePromptSandboxInfo) {
+  const sandboxSection = sandbox ? `${buildSandboxPromptSection(sandbox)}\n\n` : "";
   return `${PLAN_CONTEXT_MARKER}
 # Plan Mode (Conversational)
 
@@ -14,7 +40,7 @@ You are in Plan Mode, a Codex-like collaboration mode for producing a decision-c
 - Plan Mode keeps the session's model-visible tool schemas unchanged and enforces a runtime policy allowlist. Non-built-in tools are denied by default and may be allowed only when already active in Pi and explicitly selected by the user at their own risk.
 - Do not perform mutating actions: no edit/write tools, no patching, no formatting that rewrites files, no dependency installation, no commits, no migrations.
 
-## Phase 1 — Ground in the environment
+${sandboxSection}## Phase 1 — Ground in the environment
 
 - Explore first and ask second. Use non-mutating exploration to read files, search, inspect configuration, run read-only checks, and resolve discoverable facts.
 - Before asking the user any question, perform at least one targeted non-mutating exploration pass unless no local environment or repository is available.

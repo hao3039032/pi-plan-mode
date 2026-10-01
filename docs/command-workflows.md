@@ -4,10 +4,10 @@
 
 ## Start and choose tools
 
-`/plan start` activates Plan mode without sending a model message.
-`/plan <prompt>` starts with an initial planning message, or sends an ordinary follow-up when already active.
+`/plan start` probes the srt sandbox first: a healthy probe activates Plan mode without sending a model message, while a failing probe refuses to start and injects an agent setup guide (install commands included) instead.
+`/plan <prompt>` starts with an initial planning message — stashed automatically when the sandbox probe fails and re-sent on the next successful start — or sends an ordinary follow-up when already active.
 Only the exact argument `start` selects direct activation; `/plan start a migration` is a planning prompt.
-There is no startup flag; run `/plan start` after Pi launches.
+There is no startup flag; run `/plan start` after Pi launches, and `/plan doctor` for a human-readable sandbox diagnosis.
 
 Before starting, `/plan tools` or **Choose tools, then start…** stages a session-specific tool policy.
 **Done — start with this policy** stores the selection and starts Plan mode.

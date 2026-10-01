@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
-import planMode, { completePlanArguments } from "../src/plan-mode.js";
+import { completePlanArguments } from "../src/plan-mode.js";
+import { planMode } from "./support.js";
 import { createCustomSelectorHarness, createMockContext, createMockPi } from "./support.js";
 
 const PLAN = "# Exported plan\n\n1. Keep the exact plan.\n2. Make it readable to the agent.";
@@ -34,7 +35,7 @@ async function withTempDirectory(run: (directory: string) => Promise<void>) {
 test("plan export autocomplete exposes a path-taking public route", () => {
   assert.deepEqual(
     completePlanArguments("")?.map((item) => item.value),
-    ["start", "show", "finalize", "implement", "save", "settings", "export", "exit", "off", "tools"],
+    ["start", "show", "finalize", "implement", "save", "settings", "export", "exit", "off", "tools", "doctor"],
   );
   assert.deepEqual(
     completePlanArguments("ex")?.map((item) => item.value),
@@ -282,7 +283,7 @@ test("queued export stops when the ready plan is superseded", async () => {
     await pendingExport;
 
     await assert.rejects(readFile(exportPath, "utf8"), /ENOENT/u);
-    assert.equal(context.statuses.get("plan-mode"), "plan active");
+    assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
     assert.equal(
       context.notifications.some((notification) => /Plan exported to/u.test(notification.message)),
       false,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { startFreshImplementationSession } from "../src/fresh-implementation.js";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { MAX_PENDING_IMPLEMENTATION_MODEL_IDENTIFIER_LENGTH, restorePlanModeState } from "../src/state.js";
 import { createMockContext, createMockPi } from "./support.js";
 

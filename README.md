@@ -1,27 +1,29 @@
-# 🧭 pi-plan-mode — Plan Before Pi Edits Code
+# 🧭 pi-plan-mode — Plan in an OS Sandbox Before Pi Edits Code
 
 > **Fork note.** This is a fork of [@narumitw/pi-plan-mode](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-plan-mode) (MIT), split from the upstream monorepo with its history.
-> The only behavior change: tools you explicitly select with `defaultPlanTools` or `/plan tools` are admitted when they become active **during** a Plan workflow (for example pi-web-access tools enabled through `web_enable`), instead of staying blocked until the next workflow. The allowlist itself never grows beyond your selection; automatic policy, inactive tools, and blocked built-ins behave as upstream.
+> This fork replaces the reviewed shell-command allowlists with **the Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**: every Plan-mode `bash` call is wrapped in an OS-level sandbox (Seatbelt on macOS, bubblewrap on Linux, srt-win on Windows), so arbitrary exploration — pipes, redirects, subshells, scripts — runs freely while writes stay limited to the plan output directory and `/tmp`, and the network is deny-by-default. Completed plans persist as Markdown under `plans/` and echo in the TUI.
 >
-> Install: `pi install git:github.com/hao3039032/pi-plan-mode` (remove `npm:@narumitw/pi-plan-mode` first).
+> Install: `pi install git:github.com/hao3039032/pi-plan-mode` (remove `npm:@narumitw/pi-plan-mode` first). Then install the sandbox: `npm install -g @anthropic-ai/sandbox-runtime` plus its [platform dependencies](#-security-and-privacy).
 >
-> Sync with upstream: clone `narumiruna/pi-extensions`, re-apply the fork commit on top of it, run the plan-mode tests there, then `git subtree split --prefix=packages/pi-plan-mode` and merge the result here. Tests in `test/` rely on the upstream monorepo harness.
+> Sync with upstream: clone `narumiruna/pi-extensions`, re-apply the fork commits on top of it, run the plan-mode tests there, then `git subtree split --prefix=packages/pi-plan-mode` and merge the result here. Tests in `test/` rely on the upstream monorepo harness.
 
 [![npm](https://img.shields.io/npm/v/@narumitw/pi-plan-mode)](https://www.npmjs.com/package/@narumitw/pi-plan-mode) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-Use a Codex-like `/plan` mode to explore a codebase, resolve important questions, and approve an implementation-ready plan before Pi edits files.
+Use a Codex-like `/plan` mode to explore a codebase inside an OS sandbox, resolve important questions, and approve an implementation-ready plan before Pi edits files.
 
 ## ✨ Features
 
-- Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`.
-- Blocks mutations, inactive helpers, and unsafe shell forms while keeping helper schemas stable.
+- Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`; `/plan doctor` diagnoses the sandbox.
+- Runs every `bash` call inside the srt OS sandbox — no command-text allowlist; blocks mutating tools and PowerShell (v1 is bash-only) while keeping helper schemas stable.
+- Guides the agent through installing srt and its dependencies when the sandbox is unavailable, and stashes the planning prompt for the recovered start.
 - Uses structured questions for important ambiguity and explicit completion for a decision-ready plan.
+- Persists completed plans as Markdown in a `plans/` directory (revision-safe filenames) and renders them in the TUI with a path footer; draft updates echo on the tool result.
 - Reviews the complete plan before implementation, export, save, further planning, or discard.
 - Implements in the planning session or a fresh linked session with the approved plan.
 - Configures persistent or one-shot destination model and thinking choices for fresh implementation.
-- Restores Plan state and one saved plan across resume and compaction.
-- Configures the Plan tool allowlist, reviewed shell commands, user-trusted subcommands, export path, plan reinjection, shortcut, and thinking level.
-- Publishes statusline state and cooperates anonymously with Workflow Mutex Protocol v1 participants.
+- Restores Plan state and one saved plan across resume and compaction, re-probing the sandbox on restore.
+- Configures the Plan tool allowlist, sandbox profile (write paths, deny-read, network domains), plan output directory, export path, plan reinjection, shortcut, and thinking level.
+- Publishes statusline state (`plan active (srt)`) and cooperates anonymously with Workflow Mutex Protocol v1 participants.
 
 ## 📦 Install
 
@@ -60,7 +62,7 @@ Plan mode keeps exploration and implementation on opposite sides of an explicit 
 ```mermaid
 flowchart LR
     start["Start: /plan or /plan with a prompt"]
-    start --> explore["Explore safely: inspect and clarify"]
+    start --> explore["Explore in the srt sandbox: inspect, run, draft in plans/"]
     explore --> complete["Complete the plan with plan_mode_complete"]
     complete --> review["Review the ready plan"]
     review -->|Revise| explore
@@ -97,15 +99,16 @@ sequenceDiagram
 | Command | Purpose |
 | --- | --- |
 | `/plan` | Start or manage planning, review a plan, or choose same-session or fresh-session implementation. |
-| `/plan start` | Enter Plan mode without sending a model message. |
-| `/plan <prompt>` | Start planning with a prompt, or send a follow-up while already active. |
+| `/plan start` | Probe the srt sandbox, then enter Plan mode without sending a model message; a failing probe injects the setup guide instead of starting. |
+| `/plan <prompt>` | Start planning with a prompt (stashed if the sandbox is unavailable), or send a follow-up while already active. |
 | `/plan tools` | Choose a session-specific tool policy, then start; cancellation changes nothing. |
-| `/plan show` | Display the stored plan without starting a model turn. |
+| `/plan show` | Render the finished plan (with its document path), the saved/active plan, or the newest draft in the plan output directory. |
+| `/plan doctor` | Diagnose the srt sandbox, plan output directory, and effective sandbox profile. |
 | `/plan finalize` | Ask the active planner to finish or ask one remaining material question. |
 | `/plan implement` | Implement a completed or saved plan in this session, without a selector. |
 | `/plan save` | Save a ready plan in this Pi session and leave Plan mode. |
 | `/plan settings` | Open the same Plan Settings screen available from the menus. |
-| `/plan export [path]` | Write a ready, saved, or active implementation plan to Markdown. |
+| `/plan export [path]` | Write a ready, saved, or active implementation plan to an explicit Markdown target (finished plans are already persisted under `plans/`). |
 | `/plan exit` (alias: `off`) | Leave Plan mode and discard its ready plan, or clear a saved/active plan. |
 
 All routes support TUI and RPC.
@@ -120,41 +123,27 @@ See [command workflows](./docs/command-workflows.md) for tool selection, busy-st
 
 ## 🔒 Security and privacy
 
-While Plan mode is active, the policy blocks built-in editing tools and instructs the agent not to edit files or implement the change.
-It should explore first and ask structured questions when a preference or tradeoff materially changes the plan.
-Configure persistent defaults or a one-workflow tool override before activation; active and ready workflows lock those controls.
+Plan-mode exploration is enforced by the **Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**, an OS-level sandbox — the same layer Claude Code uses — rather than by command-text allowlists:
 
-Plan mode registers `plan_mode_question` and `plan_mode_complete` during extension load and never changes their active status itself.
-Another active-tool policy may hide them, in which case Plan start or restore fails without widening that policy.
-By default, the Plan policy allows active safe built-ins such as `read`, limited `bash`, limited `powershell`, `grep`, `find`, and `ls`.
-The optional native `powershell` tool must be active when an automatic Plan policy starts, for example through Pi's Windows `defaultTools` setting, unless its name was explicitly retained for first-request resolution.
-Built-in `edit` and `write`, `update_plan`, tools still inactive at the first request, and deselected tools are blocked at execution time even though active schemas remain visible.
-Extension and custom tools are denied by default because Pi tools do not expose standardized mutability metadata; explicitly allow a custom-tool name before starting only when you accept the risk.
-For example, you can opt into `firecrawl_scrape`, `firecrawl_search`, or `lsp_diagnostics` when you want to use the effective active tool during planning.
-An active selectable tool omitted from the Plan policy reports that it needs explicit selection through `/plan tools` or `defaultPlanTools` before the next workflow.
-Registered but inactive, unregistered, metadata-free, and built-in blocked tools report their distinct fail-closed reasons instead of suggesting that every denial is a missing selection.
-A tool admitted before later deactivation can be reactivated and reused in the current workflow without restarting.
-After they become visible, the Plan-only helpers remain visible in Normal mode, but their handlers and the `tool_call` policy reject calls unless Plan mode owns the active workflow.
+- **Filesystem**: reads are allowed everywhere except denied secret paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`, plus your `planSandbox.denyRead` entries); writes are allowed only in `/tmp` and the plan output directory (`planSandbox.allowWrite` adds more).
+- **Network**: denied for every domain by default; allow specific hosts with `planSandbox.allowedDomains` (wildcards like `*.npmjs.org`).
+- **Shell**: every `bash` call is rewritten to `srt -s <profile> -c '<command>'` in the `tool_call` hook — pipes, redirects, subshells, variables, and arbitrary commands all run inside the sandbox. `EPERM`/`Operation not permitted`/proxy denials are the boundary; annotated results tell the agent not to retry with different syntax.
+- **Tools**: built-in `edit`, `write`, `update_plan`, and `powershell` stay blocked (v1 sandboxes the `bash` tool only); in-process readers (`read`, `grep`, `find`, `ls`) stay allowed; explicitly selected non-built-in tools run at user risk, as upstream.
 
-Limited `bash` uses a fail-closed Bash policy, including when an extension overrides the canonical `bash` tool name.
-It accepts common inspection commands, read-only Git and npm queries, pipelines and command lists composed entirely of accepted commands, plus selected checks such as `npm test`, `npm run typecheck`, and `cargo test`.
-It also accepts `hostname` without arguments and local Windows `tasklist` queries using reviewed display, filter, module, and service flags.
-Reviewed Git inspections may place `--no-pager` before the accepted subcommand.
-They may also place one or more complete `-C <path>` pairs before the accepted subcommand only when every path is `.` or the exact current Pi working directory.
-Other targets are rejected so `git -C` cannot introduce executable configuration, hooks, filters, signing programs, or lazy-fetch remotes from another repository.
-It rejects output/input redirects, shell expansion, substitutions, subshells, background jobs, incomplete or directory-changing `-C` pairs, other Git global options, Git config overrides, mutating flags, dependency changes, editors, and unknown commands.
+**There is deliberately no allowlist fallback.** If the sandbox is unavailable, Plan start fails closed: the extension injects an agent-facing setup guide with the exact diagnosis and install commands (the agent must get your approval before installing), and `/plan <prompt>` stashes your prompt for the next successful start. Resumed workflows re-probe and leave Plan mode with the same guide when the sandbox is gone. Run `/plan doctor` for a human-readable check.
 
-Limited `powershell` uses a separate fail-closed PowerShell policy, including when an extension overrides the canonical `powershell` tool name.
-It accepts canonical inspection cmdlets such as `Get-ChildItem`, `Get-Content`, `Get-Item`, `Get-Location`, `Resolve-Path`, `Select-String`, `Test-Path`, `Measure-Object`, `Sort-Object`, `Format-List`, `Format-Table`, `Out-String`, and `Write-Output`.
-It accepts local `Get-Process` and `Get-Service` queries with reviewed static selectors while rejecting remote and object-input parameters.
-It also accepts the same reviewed `git` and configured `gh` queries as limited Bash, including pipelines and semicolon-delimited command lists composed entirely of accepted commands.
-It rejects redirects, variables, substitutions, script blocks, call operators, type or method expressions, stop-parsing tokens, multiline input, non-ASCII quotation delimiters, aliases, mutating cmdlets, and unknown commands.
-Use canonical cmdlet names because PowerShell aliases are intentionally outside the reviewed policy.
+**Platform requirements** (from srt):
 
-A rejected parsed command list or pipeline identifies its first blocked command segment; malformed or unsupported shell syntax reports the complete submitted input instead.
-Tests and builds may still write ignored caches or build artifacts and may execute project-defined hooks; enable or invoke them only when the repository is trusted.
-Both limited-shell policies reduce risk but do not provide an OS sandbox or confidentiality boundary.
-A configured `safeSubcommands` match bypasses both policies completely, so use it only when you intend to trust the entire submitted shell command.
+| Platform | Mechanism | Requirements |
+| --- | --- | --- |
+| macOS | Seatbelt (`sandbox-exec`) | `brew install ripgrep`; then `npm i -g @anthropic-ai/sandbox-runtime` |
+| Linux | bubblewrap + network namespace | `apt/dnf/pacman install bubblewrap socat ripgrep`; Ubuntu 24.04+ may need `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` |
+| Windows (alpha) | srt-win + WFP | one-time elevated `npx @anthropic-ai/sandbox-runtime windows-install`; PowerShell remains blocked in v1 |
+
+Set `PI_PLAN_MODE_SRT_PATH` to use a non-PATH srt binary.
+While Plan mode is active, it also instructs the agent not to edit files or implement the change, and another active-tool policy hiding `plan_mode_question`/`plan_mode_complete` still fails Plan start without widening that policy.
+
+**Plan documents.** The plan output directory (default `plans/`, configurable via `planOutputDir`) is sandbox-writable: the agent may draft and iterate Markdown there (each update echoes on the bash tool result), while every accepted `plan_mode_complete` plan is persisted by the extension as `plans/YYYY-MM-DD-<slug>.md` — revisions overwrite the same file, new workflows create a new one. The TUI renders the finished plan with a path footer, and `/plan show` renders the draft or finished document on demand. Track `plans/` in git (or ignore it) as you prefer.
 
 ## 🧭 Planning and implementation
 
@@ -360,25 +349,33 @@ The optional file is read at session start and watched for changes; only an expl
     "modelId": "claude-sonnet-4-5"
   },
   "defaultImplementationThinkingLevel": "high",
-  "defaultPlanExportPath": "PLAN.md"
+  "defaultPlanExportPath": "PLAN.md",
+  "planOutputDir": "plans",
+  "planSandbox": {
+    "allowWrite": ["/tmp", "/absolute/path/to/plans"],
+    "denyRead": ["~/.ssh", "**/.env"],
+    "allowedDomains": []
+  }
 }
 ```
 
-By default, Plan mode inherits thinking, allows active safe built-ins, uses the planning model and thinking level for fresh implementation, exports to `PLAN.md`, and relies on ordinary conversation history after implementation starts.
+By default, Plan mode inherits thinking, allows active safe built-ins, uses the planning model and thinking level for fresh implementation, exports explicit copies to `PLAN.md`, and relies on ordinary conversation history after implementation starts.
+`planOutputDir` (default `plans`) is where accepted plans are persisted and made sandbox-writable; `planSandbox` extends the built-in profile — `/tmp` and the plan output directory are always writable, and the built-in secret deny-read list always applies.
 The shortcut is disabled unless configured; enabling, changing, or removing it takes effect after `/reload` or restarting Pi.
 Until then, the current shortcut binding stays unchanged.
 Settings saves apply to later workflows; an active implementation keeps its captured reinjection policy.
 The export destination affects the next export immediately.
 
 > [!WARNING]
-> `safeSubcommands` is a JSON-only full-command trust override, not a read-only allowlist.
-> A matching prefix bypasses all shell checks, including checks on trailing commands, redirects, and mutations.
-> Configure it only for commands and repositories you fully trust.
+> `planSandbox.allowWrite` widens what sandboxed shell commands may write during planning. Every entry is an OS-enforced writable path for arbitrary commands; list only directories you are comfortable letting an agent write to while planning.
+> `planSandbox.allowedDomains` opens real network access from the sandbox; keep it empty for fully offline planning.
 
 Saves are ordered within one Pi process, preserve unknown fields, and publish atomically; separate Pi processes can still race.
 Invalid settings remain untouched and make Settings read-only; session-start failures use safe defaults.
 
-Read the [settings reference](./docs/settings.md) for all accepted values, tool-policy resolution, reinjection choices, shortcut configuration, shell-override examples, and legacy-file migration.
+Read the [settings reference](./docs/settings.md) for all accepted values, tool-policy resolution, reinjection choices, shortcut configuration, sandbox-profile examples, and legacy-file migration.
+
+**Breaking changes vs upstream** (this fork): the reviewed bash/PowerShell command allowlists and the `safeSubcommands` setting are removed; srt is a hard requirement for Plan workflows; `powershell` is blocked during Plan mode (v1 covers `bash`); completed plans are additionally persisted under `plans/`.
 
 ## 🧠 Codex-like behavior
 
@@ -389,7 +386,7 @@ This extension maps Codex's `ModeKind::Plan` behavior onto Pi's extension API:
 - The agent uses `plan_mode_question` for material preferences and completes with a standalone `plan_mode_complete` call instead of prose detection.
 - `update_plan` is blocked until the explicit implementation boundary restores Normal mode.
 - The default `clear-on-start` policy uses conversation history; `clear-after-first-run` and `keep` add exact-plan guarantees.
-- Append-only Plan and Normal contracts keep helper schemas stable, but Pi's tool policy is risk reduction rather than Codex sandbox enforcement.
+- Append-only Plan and Normal contracts keep helper schemas stable; unlike Codex, exploration is enforced by an OS sandbox (srt) rather than by command-text policy.
 
 ## 🗂️ Package layout
 

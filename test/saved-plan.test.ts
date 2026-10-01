@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "vitest";
-import planMode, { completePlanArguments } from "../src/plan-mode.js";
+import { completePlanArguments } from "../src/plan-mode.js";
+import { planMode } from "./support.js";
 import { restorePlanModeState } from "../src/state.js";
 import { createCustomSelectorHarness, createMockContext, createMockPi } from "./support.js";
 import { renderMockWidget } from "./widget-support.js";
@@ -94,7 +98,9 @@ test("plan save exits Plan mode, restores runtime state, and keeps the plan out 
       settings: { thinkingLevel: "medium" as const },
     }),
   });
-  const context = createMockContext({ hasUI: true });
+  const documentDirectory = await mkdtemp(join(tmpdir(), "pi-plan-mode-save-"));
+  const context = createMockContext({ hasUI: true, cwd: documentDirectory });
+  try {
   await mock.events.get("session_start")?.[0]?.({}, context.ctx);
   await mock.commands.get("plan")?.handler("start", context.ctx);
   assert.equal(mock.thinkingLevel, "medium");
@@ -108,10 +114,11 @@ test("plan save exits Plan mode, restores runtime state, and keeps the plan out 
   assert.equal(mock.thinkingLevel, "low");
   assert.equal(mock.sentUserMessages.length, 0);
   assert.match(context.notifications.at(-1)?.message ?? "", /saved for later/i);
-  assert.deepEqual(latestState(mock.entries)?.savedPlan, {
-    plan: PLAN,
-    source: "plan_mode_complete",
-  });
+  const savedEntry = latestState(mock.entries)?.savedPlan;
+  assert.ok(savedEntry);
+  assert.equal(savedEntry.plan, PLAN);
+  assert.equal(savedEntry.source, "plan_mode_complete");
+  assert.match(savedEntry.docPath ?? "", /saved-implementation-plan\.md$/u);
   assert.equal(latestState(mock.entries)?.enabled, false);
   assert.equal(latestState(mock.entries)?.latestPlan, undefined);
   assert.equal(latestState(mock.entries)?.activeImplementation, undefined);
@@ -153,6 +160,9 @@ test("plan save exits Plan mode, restores runtime state, and keeps the plan out 
   assert.equal(mock.entries.length, entriesBeforeRepeat);
   assert.equal(context.statuses.get("plan-mode"), "plan saved");
   assert.match(context.notifications.at(-1)?.message ?? "", /no completed plan/i);
+  } finally {
+    await rm(documentDirectory, { recursive: true, force: true });
+  }
 });
 
 test("automatic and manual ready menus expose Save for later", async () => {
@@ -553,7 +563,7 @@ test("session shutdown disposes a saved Plan menu without a late transition", as
 test("plan save autocomplete is public and saving fails closed without a ready plan", async () => {
   assert.deepEqual(
     completePlanArguments("")?.map((item) => item.value),
-    ["start", "show", "finalize", "implement", "save", "settings", "export", "exit", "off", "tools"],
+    ["start", "show", "finalize", "implement", "save", "settings", "export", "exit", "off", "tools", "doctor"],
   );
   assert.deepEqual(
     completePlanArguments("sa")?.map((item) => item.value),

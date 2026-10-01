@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
 // Fork behavior: tools that are explicitly selected for Plan mode but only become active after the
@@ -91,7 +91,7 @@ test("automatic policy keeps freezing late-activated tools", async () => {
   assert.equal((await plan.callTool("web_search"))?.block, true);
 });
 
-test("a late-admitted bash tool still goes through the limited shell policy", async () => {
+test("a late-admitted bash tool runs inside the srt sandbox wrap", async () => {
   const mock = createMockPi({ activeTools: ["read"], allTools: [builtinTool("read"), builtinTool("bash")] });
   planMode(mock.pi, {
     readSettings: async () => ({
@@ -110,6 +110,11 @@ test("a late-admitted bash tool still goes through the limited shell policy", as
       { toolName: "bash", input: { command } },
       context.ctx,
     ) as Promise<ToolCallResult>;
+  // Sandboxed exploration: any command, including mutations, is admitted and wrapped for srt;
+  // the OS sandbox — not a command-text policy — denies the actual writes.
   assert.equal(await call("git status"), undefined);
-  assert.equal((await call("rm -rf build"))?.block, true);
+  assert.equal(await call("rm -rf build"), undefined);
+  const wrappedInput = { command: "git status --short" };
+  await mock.events.get("tool_call")?.[0]?.({ toolName: "bash", input: wrappedInput }, context.ctx);
+  assert.match(wrappedInput.command, /^'.*srt' -s '.*' -c 'git status --short'$/u);
 });

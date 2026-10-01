@@ -1,4 +1,4 @@
-import { buildPlanModePrompt } from "./prompt.js";
+import { buildPlanModePrompt, type PlanModePromptSandboxInfo } from "./prompt.js";
 
 export const MODE_CONTRACT_MESSAGE_TYPE = "plan-mode-transition";
 export const MODE_CONTRACT_VERSION = 1;
@@ -19,15 +19,17 @@ interface ContractMessage {
   details?: unknown;
 }
 
-export function modeContractContent(mode: PlanModeContract) {
-  return mode === "plan" ? `${PLAN_CONTRACT_MARKER}\n${buildPlanModePrompt()}` : NORMAL_CONTRACT;
+export function modeContractContent(mode: PlanModeContract, sandbox?: PlanModePromptSandboxInfo) {
+  return mode === "plan"
+    ? `${PLAN_CONTRACT_MARKER}\n${buildPlanModePrompt(sandbox)}`
+    : NORMAL_CONTRACT;
 }
 
-export function createModeContractMessage(mode: PlanModeContract, timestamp = Date.now()) {
+export function createModeContractMessage(mode: PlanModeContract, timestamp = Date.now(), sandbox?: PlanModePromptSandboxInfo) {
   return {
     role: "custom" as const,
     customType: MODE_CONTRACT_MESSAGE_TYPE,
-    content: modeContractContent(mode),
+    content: modeContractContent(mode, sandbox),
     display: false,
     details: { version: MODE_CONTRACT_VERSION, mode },
     timestamp,
@@ -39,6 +41,13 @@ export function modeContractFromMessage(message: unknown): PlanModeContract | un
   if (candidate.customType !== MODE_CONTRACT_MESSAGE_TYPE) return undefined;
   if (candidate.content === modeContractContent("plan")) return "plan";
   if (candidate.content === modeContractContent("normal")) return "normal";
+  // The plan contract carries dynamic sandbox details, so identical content is not guaranteed
+  // across settings changes; trust the persisted details field before falling back to markers.
+  const details = isRecord(candidate.details) ? candidate.details : undefined;
+  if (details?.mode === "plan" || details?.mode === "normal") return details.mode;
+  const content = typeof candidate.content === "string" ? candidate.content : "";
+  if (content.startsWith(PLAN_CONTRACT_MARKER)) return "plan";
+  if (content.startsWith(NORMAL_CONTRACT_MARKER)) return "normal";
   return undefined;
 }
 
@@ -87,4 +96,8 @@ function leadingSummaryBoundary(messages: readonly unknown[]) {
 function unwrapMessage(message: unknown): ContractMessage {
   const entry = message as { message?: unknown } | undefined;
   return (entry?.message ?? message ?? {}) as ContractMessage;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

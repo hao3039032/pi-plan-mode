@@ -23,7 +23,7 @@ export function compareTools(left: ToolInfo, right: ToolInfo) {
 export function toolPolicyLabel(tool: ToolInfo) {
   const policy = classifyPlanModeTool(tool);
   if (policy === "read-only") return "built-in read-only";
-  if (policy === "limited") return "built-in limited";
+  if (policy === "sandboxed") return "built-in · SRT-sandboxed shell";
   if (policy === "blocked") return "built-in blocked";
   return `user opt-in: ${toolSourceLabel(tool)}`;
 }

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, vi } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import * as settingsModule from "../src/settings.js";
 import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
@@ -112,7 +112,7 @@ test("configured Plan tools are an allowlist over active tools, not an activatio
   });
 });
 
-test("active PowerShell is an automatic safe built-in without changing tool schemas", async () => {
+test("active PowerShell is blocked in Plan v1 while inactive Plan mode leaves it alone", async () => {
   const baseline = ["read", "powershell", "write", ...HELPERS];
   const mock = createMockPi({
     activeTools: ["read", "powershell", "write"],
@@ -130,15 +130,11 @@ test("active PowerShell is an automatic safe built-in without changing tool sche
   await mock.commands.get("plan")?.handler("start", context.ctx);
 
   assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
-  assert.equal(await callTool(mock, context, "powershell", { command: "Get-ChildItem -Force" }), undefined);
-  assert.equal(
-    (
-      (await callTool(mock, context, "powershell", {
-        command: "Set-Content README.md changed",
-      })) as { block?: boolean }
-    ).block,
-    true,
-  );
+  const blocked = (await callTool(mock, context, "powershell", {
+    command: "Get-ChildItem -Force",
+  })) as { block?: boolean; reason?: string };
+  assert.equal(blocked.block, true);
+  assert.match(blocked.reason ?? "", /bash/);
 });
 
 test("active selected custom tools execute while deselected and mutating tools fail closed", async () => {

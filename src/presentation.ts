@@ -1,5 +1,7 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, truncateToWidth } from "@earendil-works/pi-tui";
+import { readFile } from "node:fs/promises";
+import { displayPath, newestPlanMarkdown } from "./plan-docs.js";
 import type { PlanModeState } from "./state.js";
 
 const STATUS_KEY = "plan-mode";
@@ -12,7 +14,11 @@ export function updatePlanModeUi(ctx: ExtensionContext, state: PlanModeState, to
   if (state.enabled && state.latestPlan) {
     lines = ["Proposed plan ready", "Use /plan to implement, save, revise, or exit Plan mode."];
   } else if (state.enabled) {
-    lines = ["Plan mode: planning", toolSummary(), "Finish with plan_mode_complete when decision-ready."];
+    lines = [
+      "Plan mode: planning (srt sandbox)",
+      toolSummary(),
+      "Finish with plan_mode_complete when decision-ready.",
+    ];
   } else if (state.savedPlan) {
     lines = ["Plan saved for later", "Use /plan to show, implement, or clear it."];
   } else if (state.activeImplementation) {
@@ -45,28 +51,60 @@ export function clearPlanModeUi(ctx: ExtensionContext) {
   ctx.ui.setWidget(PLAN_WIDGET_KEY, undefined);
 }
 
-export function showStoredPlan(pi: ExtensionAPI, ctx: ExtensionContext, state: PlanModeState) {
+export async function showStoredPlan(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  state: PlanModeState,
+  options: { planOutputDir?: string; draftSinceMs?: number } = {},
+) {
   const readyPlan = state.enabled ? state.latestPlan?.trim() : undefined;
   const savedPlan = state.savedPlan?.plan.trim();
   if (savedPlan && (ctx.mode === "print" || ctx.mode === "json")) {
     throw new Error("Saved plan display is unavailable in print/JSON mode. Use TUI or RPC.");
   }
   const activePlan = state.activeImplementation?.plan.trim();
-  const plan = readyPlan ?? savedPlan ?? activePlan;
+  let plan = readyPlan ?? savedPlan ?? activePlan;
+  let title = readyPlan ? "Proposed Plan" : savedPlan ? "Saved Plan" : "Active Implementation Plan";
+  let docPath = readyPlan
+    ? state.planDocPath
+    : savedPlan
+      ? state.savedPlan?.docPath
+      : state.activeImplementation?.docPath;
+  if (!plan && state.enabled && options.planOutputDir) {
+    const draftPath = await newestPlanMarkdown(options.planOutputDir, options.draftSinceMs);
+    if (draftPath) {
+      plan = (await readTextFile(draftPath))?.trim() || undefined;
+      docPath = draftPath;
+      title = "Plan Draft";
+    }
+  }
   if (!plan) {
     ctx.ui.notify("No completed plan is available. Use /plan finalize when planning is complete.", "info");
     return;
   }
-  const title = readyPlan ? "Proposed Plan" : savedPlan ? "Saved Plan" : "Active Implementation Plan";
-  showPlanModePlan(pi, ctx, title, plan);
+  showPlanModePlan(pi, ctx, title, plan, docPath, ctx.cwd);
 }
 
-export function showPlanModePlan(pi: ExtensionAPI, ctx: ExtensionContext, title: string, plan: string) {
+function footerLine(docPath: string | undefined, from: string | undefined) {
+  const display = displayPath(docPath, from);
+  return display ? `📄 ${display}` : undefined;
+}
+
+export function showPlanModePlan(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  title: string,
+  plan: string,
+  docPath?: string,
+  cwd?: string,
+) {
+  const footer = footerLine(docPath, cwd);
+  const content = footer ? `**${title}**\n\n${plan}\n\n---\n${footer}` : `**${title}**\n\n${plan}`;
   try {
     pi.sendMessage(
       {
         customType: "proposed-plan",
-        content: `**${title}**\n\n${plan}`,
+        content,
         display: true,
       },
       { triggerTurn: false },
@@ -77,12 +115,20 @@ export function showPlanModePlan(pi: ExtensionAPI, ctx: ExtensionContext, title:
   }
 }
 
+async function readTextFile(path: string) {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 export function planModeStatusText(state: PlanModeState, toolSummary: () => string) {
   if (state.enabled) {
     if (state.latestPlan) {
       return `Plan mode is active and a proposed plan is ready. ${toolSummary()}`;
     }
-    return `Plan mode is active. ${toolSummary()} Explore, ask, and finish with plan_mode_complete when decision-ready.`;
+    return `Plan mode is active. Shell runs in the srt sandbox. ${toolSummary()} Explore, ask, and finish with plan_mode_complete when decision-ready.`;
   }
   if (state.savedPlan) return "A plan is saved for later.";
   if (state.activeImplementation) return "An implementation plan is active.";
@@ -109,7 +155,7 @@ function publishPlanModeWidget(ctx: ExtensionContext, lines: readonly string[] |
 function formatStatus(state: PlanModeState) {
   if (state.enabled) {
     if (state.awaitingAction || state.latestPlan) return "plan ready";
-    return "plan active";
+    return "plan active (srt)";
   }
   if (state.savedPlan) return "plan saved";
   if (state.activeImplementation) return "plan implementing";

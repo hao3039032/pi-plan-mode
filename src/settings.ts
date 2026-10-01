@@ -5,7 +5,6 @@ import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type ImplementationModelOverride, isPendingImplementationModelIdentifier } from "./implementation-models.js";
-import type { SafeSubcommands } from "./tool-policy.js";
 
 export const PLAN_MODE_SETTINGS_FILE = "pi-plan-mode.json";
 const LEGACY_PLAN_MODE_SETTINGS_FILE = "plan-mode.json";
@@ -82,6 +81,11 @@ const MAX_PLAN_EXPORT_PATH_LENGTH = 4096;
 export type PlanModeThinkingLevel = (typeof PLAN_MODE_THINKING_LEVELS)[number];
 export type ImplementationPlanRetention = (typeof IMPLEMENTATION_PLAN_RETENTIONS)[number];
 export type PlanModeFixedThinkingLevel = (typeof IMPLEMENTATION_THINKING_LEVELS)[number];
+export interface PlanSandboxSettings {
+  allowWrite?: string[];
+  denyRead?: string[];
+  allowedDomains?: string[];
+}
 export interface PlanModeSettings {
   thinkingLevel: PlanModeThinkingLevel;
   defaultPlanTools?: string[];
@@ -89,7 +93,8 @@ export interface PlanModeSettings {
   defaultImplementationModel?: ImplementationModelOverride;
   defaultImplementationThinkingLevel?: PlanModeFixedThinkingLevel;
   defaultPlanExportPath?: string;
-  safeSubcommands?: SafeSubcommands;
+  planOutputDir?: string;
+  planSandbox?: PlanSandboxSettings;
   toggleShortcut?: KeyId;
 }
 export interface PlanModeSettingsPatch {
@@ -99,6 +104,8 @@ export interface PlanModeSettingsPatch {
   defaultImplementationModel?: ImplementationModelOverride | null;
   defaultImplementationThinkingLevel?: PlanModeFixedThinkingLevel | null;
   defaultPlanExportPath?: string | null;
+  planOutputDir?: string | null;
+  planSandbox?: PlanSandboxSettings | null;
   toggleShortcut?: KeyId | null;
 }
 export interface UpdatePlanModeSettingsOptions {
@@ -171,10 +178,15 @@ export function normalizePlanModeSettings(value: unknown): PlanModeSettings | un
     if (!toggleShortcut) return undefined;
     settings.toggleShortcut = toggleShortcut;
   }
-  if (Object.hasOwn(value, "safeSubcommands")) {
-    const safeSubcommands = normalizeSafeSubcommands(Reflect.get(value, "safeSubcommands"));
-    if (!safeSubcommands) return undefined;
-    settings.safeSubcommands = safeSubcommands;
+  if (Object.hasOwn(value, "planOutputDir")) {
+    const planOutputDir = normalizePlanOutputDir(Reflect.get(value, "planOutputDir"));
+    if (!planOutputDir) return undefined;
+    settings.planOutputDir = planOutputDir;
+  }
+  if (Object.hasOwn(value, "planSandbox")) {
+    const planSandbox = normalizePlanSandbox(Reflect.get(value, "planSandbox"));
+    if (!planSandbox) return undefined;
+    settings.planSandbox = planSandbox;
   }
   return settings;
 }
@@ -239,24 +251,45 @@ export function normalizeKeyId(value: unknown): KeyId | undefined {
   return normalized as KeyId;
 }
 
-function normalizeSafeSubcommands(value: unknown): SafeSubcommands | undefined {
-  if (!isSettingsDocument(value)) return undefined;
-  const entries: [string, string[]][] = [];
-  for (const [command, subcommands] of Object.entries(value)) {
-    const normalizedCommand = command.trim();
-    if (
-      !normalizedCommand ||
-      !Array.isArray(subcommands) ||
-      !subcommands.every((item): item is string => typeof item === "string" && item.trim().length > 0)
-    ) {
-      return undefined;
-    }
-    const normalizedSubcommands = Array.from(new Set(subcommands.map((subcommand) => subcommand.trim())));
-    const existing = entries.find(([existingCommand]) => existingCommand === normalizedCommand);
-    if (existing) existing[1] = Array.from(new Set([...existing[1], ...normalizedSubcommands]));
-    else entries.push([normalizedCommand, normalizedSubcommands]);
+function normalizePlanOutputDir(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  if (
+    !normalized ||
+    normalized.length > MAX_PLAN_EXPORT_PATH_LENGTH ||
+    [...normalized].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
+    })
+  ) {
+    return undefined;
   }
-  return Object.fromEntries(entries);
+  return normalized;
+}
+
+function normalizePlanSandbox(value: unknown): PlanSandboxSettings | undefined {
+  if (!isSettingsDocument(value)) return undefined;
+  if (Object.keys(value).some((key) => key !== "allowWrite" && key !== "denyRead" && key !== "allowedDomains")) {
+    return undefined;
+  }
+  const settings: PlanSandboxSettings = {};
+  for (const key of ["allowWrite", "denyRead", "allowedDomains"] as const) {
+    if (!Object.hasOwn(value, key)) continue;
+    const list = normalizePlanSandboxList(Reflect.get(value, key));
+    if (!list) return undefined;
+    settings[key] = list;
+  }
+  return Object.keys(settings).length > 0 ? settings : undefined;
+}
+
+function normalizePlanSandboxList(value: unknown) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item): item is string => typeof item === "string" && item.trim().length > 0)
+  ) {
+    return undefined;
+  }
+  return Array.from(new Set(value.map((item) => item.trim())));
 }
 
 export async function readPlanModeSettings(settingsPath?: string): Promise<PlanModeSettingsLoadResult> {
@@ -325,6 +358,14 @@ export function updatePlanModeSettings(
     if (patch.toggleShortcut === null) delete updated.toggleShortcut;
     else if (patch.toggleShortcut !== undefined) {
       updated.toggleShortcut = patch.toggleShortcut;
+    }
+    if (patch.planOutputDir === null) delete updated.planOutputDir;
+    else if (patch.planOutputDir !== undefined) {
+      updated.planOutputDir = patch.planOutputDir;
+    }
+    if (patch.planSandbox === null) delete updated.planSandbox;
+    else if (patch.planSandbox !== undefined) {
+      updated.planSandbox = patch.planSandbox;
     }
     const settings = normalizePlanModeSettings(updated);
     if (!settings) throw invalidSettingsError(settingsPath, "invalid settings shape");
@@ -505,4 +546,12 @@ export function configuredPlanExportPath(settings: PlanModeSettings) {
 
 export function configuredPlanModeToggleShortcut(settings: PlanModeSettings): KeyId | undefined {
   return settings.toggleShortcut;
+}
+
+export function configuredPlanOutputDir(settings: PlanModeSettings) {
+  return settings.planOutputDir?.trim() || undefined;
+}
+
+export function configuredPlanSandbox(settings: PlanModeSettings): PlanSandboxSettings {
+  return settings.planSandbox ?? {};
 }

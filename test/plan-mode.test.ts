@@ -3,10 +3,10 @@ import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import { planModeCompleted } from "../src/completion-tool.js";
 import { FINALIZE_PLAN_PROMPT, RETRY_FINALIZE_PLAN_PROMPT } from "../src/finalization-request.js";
-import planMode, {
+import planModeDefault, {
   buildPlanModePrompt,
   completePlanArguments,
   extractProposedPlan,
@@ -15,7 +15,7 @@ import planMode, {
   stripProposedPlanBlocks,
   stripProposedPlanBlocksFromMessage,
 } from "../src/plan-mode.js";
-import { createMockContext, createMockPi } from "./support.js";
+import { createMockContext, createMockPi, missingSrtDiagnosis, planMode, sandboxDeps } from "./support.js";
 import { renderMockWidget } from "./widget-support.js";
 
 test("plan-mode registers question tools, command, and safety hooks without a CLI flag", () => {
@@ -151,7 +151,7 @@ test("plan_mode_complete result renders the plan as Markdown", () => {
 test("completePlanArguments suggests management tokens only", () => {
   assert.deepEqual(
     completePlanArguments("")?.map((item) => item.label),
-    ["start", "show", "finalize", "implement", "save", "settings", "export", "exit", "off", "tools"],
+    ["start", "show", "finalize", "implement", "save", "settings", "export", "exit", "off", "tools", "doctor"],
   );
   assert.deepEqual(
     completePlanArguments("to")?.map((item) => item.value),
@@ -304,7 +304,7 @@ test("session restore fails closed when required Plan helpers are inactive", asy
 
   mock.rawPi.setActiveTools(["read", "plan_mode_question", "plan_mode_complete"]);
   await mock.commands.get("plan")?.handler("start", context.ctx);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 });
 
 test("session restore uses only the active branch state", async () => {
@@ -365,7 +365,7 @@ test("session restore fails closed for malformed persisted completed plans", asy
       },
     });
     await mock.events.get("session_start")?.[0]?.({}, context.ctx);
-    assert.equal(context.statuses.get("plan-mode"), "plan active");
+    assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
     await mock.commands.get("plan")?.handler("implement", context.ctx);
     assert.equal(mock.sentUserMessages.length, 0);
   }
@@ -441,7 +441,7 @@ test("session restore recovers only valid completion details after the latest st
     },
   });
   await discarded.events.get("session_start")?.[0]?.({}, discardedContext.ctx);
-  assert.equal(discardedContext.statuses.get("plan-mode"), "plan active");
+  assert.equal(discardedContext.statuses.get("plan-mode"), "plan active (srt)");
 
   const malformed = createMockPi({ activeTools: ["read"] });
   planMode(malformed.pi);
@@ -465,7 +465,7 @@ test("session restore recovers only valid completion details after the latest st
     },
   });
   await malformed.events.get("session_start")?.[0]?.({}, malformedContext.ctx);
-  assert.equal(malformedContext.statuses.get("plan-mode"), "plan active");
+  assert.equal(malformedContext.statuses.get("plan-mode"), "plan active (srt)");
 });
 
 test("Plan thinking level restores only while the extension owns the applied value", async () => {
@@ -728,7 +728,7 @@ test("busy active Plan exits fail observably without releasing tools in every co
     }
     assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "plan_mode_question", "plan_mode_complete"]);
     assert.equal(mock.entries.length, entriesAfterStart);
-    assert.equal(context.statuses.get("plan-mode"), "plan active");
+    assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   }
 });
 
@@ -755,7 +755,7 @@ test("explicit finalization retries once after settlement and then fails visibly
   await agentSettled({}, context.ctx);
   assert.equal(mock.sentUserMessages.length, 2);
   assert.match(context.notifications.at(-1)?.message ?? "", /ended twice/i);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 });
 
 test("structured finalization outcomes and cancellation suppress extension retries", async () => {
@@ -887,7 +887,7 @@ test("plan implement fails closed without a plan and hands off a stored plan", a
   const context = createMockContext();
   await mock.commands.get("plan")?.handler("start", context.ctx);
   await mock.commands.get("plan")?.handler("implement", context.ctx);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.equal(mock.sentUserMessages.length, 0);
   assert.match(context.notifications.at(-1)?.message ?? "", /No completed plan/i);
 
@@ -911,7 +911,7 @@ test("failed finalize delivery keeps Plan mode active", async () => {
   const context = createMockContext();
   await mock.commands.get("plan")?.handler("start", context.ctx);
   await mock.commands.get("plan")?.handler("finalize", context.ctx);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.match(context.notifications.at(-1)?.message ?? "", /no longer active/);
 });
 
@@ -976,7 +976,7 @@ test("invalid proposed plans remain unready and notify the user", async () => {
     context.ctx,
   );
   assert.match(context.notifications.at(-1)?.message ?? "", /closing tag is missing/);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 });
 
 test("prose-only promise to present a plan remains active without false readiness", async () => {
@@ -997,7 +997,7 @@ test("prose-only promise to present a plan remains active without false readines
     context.ctx,
   );
 
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.equal(mock.sentMessages.length, 1, "only the hidden Plan contract is published");
 });
 
@@ -1227,7 +1227,7 @@ test("a newer Plan turn cancels stale ready presentation", async () => {
   await mock.events.get("before_agent_start")?.[0]?.({ systemPrompt: "base" }, context.ctx);
   await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
   assert.equal(selectCalls, 0);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 });
 
 test("plan_mode_complete rejects inactive and invalid submissions", async () => {
@@ -1249,7 +1249,7 @@ test("plan_mode_complete rejects inactive and invalid submissions", async () => 
     execute("large", { plan: "x".repeat(50_001) }, undefined, undefined, context.ctx),
     /must not exceed 50000 characters/,
   );
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 });
 
 test("proposed-plan parser distinguishes valid and malformed output", () => {
@@ -1352,6 +1352,26 @@ test("Plan prompt requires the standalone completion contract", () => {
   assert.doesNotMatch(prompt, /<proposed_plan>/i);
 });
 
+test("Plan prompt embeds the sandbox section only when sandbox info is provided", () => {
+  const bare = buildPlanModePrompt();
+  assert.doesNotMatch(bare, /Sandboxed exploration/);
+  const prompt = buildPlanModePrompt({
+    writePaths: ["/tmp", "/repo/plans"],
+    planOutputDir: "/repo/plans",
+    allowedDomains: [],
+  });
+  assert.match(prompt, /Sandboxed exploration/);
+  assert.match(prompt, /writes are allowed only in: \/tmp, \/repo\/plans/);
+  assert.match(prompt, /denied for every domain/);
+  assert.match(prompt, /\/repo\/plans\//);
+  const networked = buildPlanModePrompt({
+    writePaths: ["/tmp"],
+    planOutputDir: "/repo/plans",
+    allowedDomains: ["api.github.com"],
+  });
+  assert.match(networked, /allowed only for these domains: api\.github\.com/);
+});
+
 test("proposed-plan helpers extract and remove plan blocks", () => {
   assert.equal(extractProposedPlan("Intro\n<proposed_plan>\n# Plan\n</proposed_plan>"), "# Plan");
   assert.equal(stripProposedPlanBlocks("A\n<proposed_plan>\nsecret\n</proposed_plan>\nB"), "A\n\nB");
@@ -1373,4 +1393,176 @@ test("proposed-plan helpers extract and remove plan blocks", () => {
     ]),
     "answer",
   );
+});
+
+test("plan start fails closed and injects the agent setup guide when srt is unavailable", async () => {
+  const mock = createMockPi({ activeTools: ["read", "bash"] });
+  planModeDefault(mock.pi, sandboxDeps(missingSrtDiagnosis));
+  const context = createMockContext({ hasUI: true });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  await mock.commands.get("plan")?.handler("start", context.ctx);
+
+  assert.equal(context.statuses.get("plan-mode"), undefined);
+  assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /SRT SETUP GUIDE missing/);
+  assert.match(context.notifications.at(-1)?.message ?? "", /srt sandbox/iu);
+});
+
+test("plan start with a prompt stashes it when the sandbox fails and resends it after recovery", async () => {
+  const mock = createMockPi({ activeTools: ["read", "bash"] });
+  let diagnosis = missingSrtDiagnosis;
+  planModeDefault(mock.pi, {
+    ...sandboxDeps(),
+    diagnoseSandbox: async () => ({ ...diagnosis }),
+  });
+  const context = createMockContext({ hasUI: true });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  await mock.commands.get("plan")?.handler("design the migration", context.ctx);
+  assert.equal(context.statuses.get("plan-mode"), undefined);
+
+  diagnosis = { ok: true, platform: "linux", srtCommand: "/usr/bin/srt", missingDependencies: [] };
+  await mock.commands.get("plan")?.handler("start", context.ctx);
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+  assert.equal(mock.sentUserMessages.at(-1)?.text, "design the migration");
+});
+
+test("plan workflows wrap every bash command with the srt sandbox and keep other arguments", async () => {
+  const mock = createMockPi({ activeTools: ["read", "bash", "powershell"] });
+  planMode(mock.pi);
+  const context = createMockContext({ hasUI: true });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  await mock.commands.get("plan")?.handler("start", context.ctx);
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+
+  const input = { command: "cat README.md | grep 'plan' > /tmp/out.txt", timeout: 30_000 };
+  const result = await mock.events.get("tool_call")?.[0]?.({ toolName: "bash", input }, context.ctx);
+  assert.equal(result, undefined);
+  assert.match(input.command, /^'\/usr\/local\/bin\/srt' -s '.*pi-plan-mode-srt-.*\.json' -c '/);
+  assert.match(input.command, /cat README\.md \| grep '\\''plan'\\'' > \/tmp\/out\.txt'$/);
+  assert.equal(input.timeout, 30_000);
+
+  const powershellResult = (await mock.events.get("tool_call")?.[0]?.(
+    { toolName: "powershell", input: { command: "Get-ChildItem" } },
+    context.ctx,
+  )) as { block: boolean; reason: string };
+  assert.equal(powershellResult.block, true);
+  assert.match(powershellResult.reason, /bash/);
+});
+
+test("restored workflows re-probe the sandbox and leave Plan mode when it is unavailable", async () => {
+  const mock = createMockPi({ activeTools: ["read", "bash"] });
+  planModeDefault(mock.pi, sandboxDeps(missingSrtDiagnosis));
+  const restoredState = {
+    type: "custom",
+    customType: "plan-mode-state",
+    data: { enabled: true, awaitingAction: false },
+  };
+  const context = createMockContext({
+    hasUI: true,
+    sessionManager: {
+      getBranch: () => [restoredState],
+      getEntries: () => [restoredState],
+    },
+  });
+  await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+
+  // Until the async re-probe finishes, bash fails closed because no sandbox is active.
+  const blocked = (await mock.events.get("tool_call")?.[0]?.(
+    { toolName: "bash", input: { command: "ls" } },
+    context.ctx,
+  )) as { block: boolean; reason: string };
+  assert.equal(blocked.block, true);
+  assert.match(blocked.reason, /sandbox/);
+
+  await vi.waitFor(() => {
+    assert.equal(context.statuses.get("plan-mode"), undefined);
+  });
+  assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /SRT SETUP GUIDE missing/);
+});
+
+test("completed plans persist to the plan output directory and revisions overwrite the same document", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-doc-flow-"));
+  try {
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi);
+    const context = createMockContext({ cwd: directory, hasUI: true });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await mock.commands.get("plan")?.handler("start", context.ctx);
+
+    const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete");
+    assert.ok(complete);
+    await complete.execute("id-1", { plan: "# Ship the sandbox\n\nfirst" }, undefined, undefined, context.ctx);
+    const { readFile, readdir } = await import("node:fs/promises");
+    const files = await readdir(join(directory, "plans"));
+    assert.deepEqual(files, ["ship-the-sandbox.md"].map((name) => `${new Date().toISOString().slice(0, 10)}-${name}`));
+    const docPath = join(directory, "plans", files[0] as string);
+    assert.equal(await readFile(docPath, "utf8"), "# Ship the sandbox\n\nfirst\n");
+
+    await complete.execute("id-2", { plan: "# Ship the sandbox\n\nrevised" }, undefined, undefined, context.ctx);
+    assert.deepEqual(await readdir(join(directory, "plans")), [files[0]]);
+    assert.equal(await readFile(docPath, "utf8"), "# Ship the sandbox\n\nrevised\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bash results annotate sandbox denials and plan draft updates", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-annotate-"));
+  try {
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi);
+    const context = createMockContext({ cwd: directory, hasUI: true });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await mock.commands.get("plan")?.handler("start", context.ctx);
+
+    const callInput = { command: "cat plans/draft.md" };
+    await mock.events.get("tool_call")?.[0]?.({ toolName: "bash", input: callInput, toolCallId: "call-1" }, context.ctx);
+    const { writeFile, mkdir } = await import("node:fs/promises");
+    // Keep the draft's mtime strictly after the tracked call start.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await mkdir(join(directory, "plans"), { recursive: true });
+    await writeFile(join(directory, "plans", "draft.md"), "# Draft", { flag: "wx" });
+
+    const denialResult = await mock.events.get("tool_result")?.[0]?.(
+      {
+        type: "tool_result",
+        toolName: "bash",
+        toolCallId: "call-1",
+        input: callInput,
+        content: [{ type: "text", text: "cat: /repo/x: Operation not permitted" }],
+        isError: true,
+      },
+      context.ctx,
+    );
+    const annotated = (denialResult as { content: Array<{ type: string; text?: string }> }).content;
+    const annotationText = annotated.at(-1)?.text ?? "";
+    assert.match(annotationText, /sandbox boundary/);
+    assert.match(annotationText, /Plan draft updated → plans\/draft\.md/);
+
+    const cleanResult = await mock.events.get("tool_result")?.[0]?.(
+      {
+        type: "tool_result",
+        toolName: "read",
+        toolCallId: "call-2",
+        input: {},
+        content: [{ type: "text", text: "fine" }],
+        isError: false,
+      },
+      context.ctx,
+    );
+    assert.equal(cleanResult, undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("plan doctor reports the sandbox diagnosis", async () => {
+  const mock = createMockPi({ activeTools: ["read", "bash"] });
+  planMode(mock.pi);
+  const context = createMockContext({ hasUI: true });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  await mock.commands.get("plan")?.handler("doctor", context.ctx);
+  const notification = context.notifications.at(-1)?.message ?? "";
+  assert.match(notification, /srt sandbox: OK \(\/usr\/local\/bin\/srt\)/);
+  assert.match(notification, /Plan output directory:/);
+  assert.match(notification, /Sandbox network domains: none/);
 });

@@ -8,7 +8,7 @@ import {
   startFreshImplementationSession,
 } from "../src/fresh-implementation.js";
 import { showReadyPlanMenu } from "../src/plan-action-menus.js";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { createCustomSelectorHarness, createMockContext, createMockPi } from "./support.js";
 
 const PLAN = `# Fresh implementation plan

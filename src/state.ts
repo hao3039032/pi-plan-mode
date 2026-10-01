@@ -25,11 +25,18 @@ export interface ActiveImplementationPlan {
   source: PlanCompletionSource;
   startedAt: number;
   retention?: ImplementationPlanRetention;
+  docPath?: string;
+}
+
+export interface PlanModeSandboxState {
+  srtPath: string;
+  settingsPath: string;
 }
 
 export interface SavedPlan {
   plan: string;
   source: PlanCompletionSource;
+  docPath?: string;
 }
 
 export interface ImplementationRuntimeSelection {
@@ -59,6 +66,9 @@ export interface PlanModeState {
   selectedToolNames?: string[];
   selectedToolKeys?: string[];
   workflowToolPolicy?: PlanModeWorkflowToolPolicy;
+  sandbox?: PlanModeSandboxState;
+  planDocPath?: string;
+  pendingPlanPrompt?: string;
   previousThinkingLevel?: PlanModeFixedThinkingLevel;
   appliedThinkingLevel?: PlanModeFixedThinkingLevel;
   manualThinkingLevel?: PlanModeFixedThinkingLevel;
@@ -111,10 +121,35 @@ export function restorePlanModeState(entries: unknown[], stateEntryType: string)
     selectedToolNames: stringArray(entry.data.selectedToolNames),
     selectedToolKeys: stringArray(entry.data.selectedToolKeys),
     workflowToolPolicy: enabled ? normalizeWorkflowToolPolicy(entry.data.workflowToolPolicy) : undefined,
+    sandbox: enabled ? normalizeSandboxState(entry.data.sandbox) : undefined,
+    planDocPath: enabled ? planDocPathValue(entry.data.planDocPath) : undefined,
+    pendingPlanPrompt: planPromptValue(entry.data.pendingPlanPrompt),
     previousThinkingLevel: enabled ? fixedThinkingLevel(entry.data.previousThinkingLevel) : undefined,
     appliedThinkingLevel: enabled ? fixedThinkingLevel(entry.data.appliedThinkingLevel) : undefined,
     manualThinkingLevel: enabled ? fixedThinkingLevel(entry.data.manualThinkingLevel) : undefined,
   };
+}
+
+function normalizeSandboxState(value: unknown): PlanModeSandboxState | undefined {
+  if (!isRecord(value)) return undefined;
+  const srtPath = boundedStringValue(value.srtPath, 4096);
+  const settingsPath = boundedStringValue(value.settingsPath, 4096);
+  if (!srtPath || !settingsPath) return undefined;
+  return { srtPath, settingsPath };
+}
+
+function planDocPathValue(value: unknown) {
+  return boundedStringValue(value, 4096);
+}
+
+function planPromptValue(value: unknown) {
+  return boundedStringValue(value, 8_000);
+}
+
+function boundedStringValue(value: unknown, maxLength: number) {
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength) return undefined;
+  if ([...value].some((character) => character.charCodeAt(0) === 0)) return undefined;
+  return value;
 }
 
 function normalizeWorkflowToolPolicy(value: unknown): PlanModeWorkflowToolPolicy | undefined {
@@ -141,7 +176,8 @@ function normalizeSavedPlan(value: unknown): SavedPlan | undefined {
   const source = planCompletionSource(value.source);
   const normalized = normalizePlanModeCompletion({ plan: value.plan });
   if (!source || !normalized.ok) return undefined;
-  return { plan: normalized.plan, source };
+  const docPath = planDocPathValue(value.docPath);
+  return { plan: normalized.plan, source, ...(docPath ? { docPath } : {}) };
 }
 
 function normalizePendingImplementationRuntime(value: unknown): PendingImplementationRuntime | undefined {
@@ -185,7 +221,8 @@ function normalizeActiveImplementation(value: unknown): ActiveImplementationPlan
   const retention = IMPLEMENTATION_PLAN_RETENTIONS.includes(value.retention as ImplementationPlanRetention)
     ? (value.retention as ImplementationPlanRetention)
     : "keep";
-  return { id, plan: normalized.plan, source, startedAt, retention };
+  const docPath = planDocPathValue(value.docPath);
+  return { id, plan: normalized.plan, source, startedAt, retention, ...(docPath ? { docPath } : {}) };
 }
 
 function normalizePersistedPlan(value: unknown) {

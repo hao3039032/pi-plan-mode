@@ -1,5 +1,17 @@
 # @narumitw/pi-plan-mode
 
+## 0.59.0 (fork)
+
+### Minor Changes
+
+- Replace the reviewed bash/PowerShell command allowlists with the **Anthropic Sandbox Runtime (srt)**: every Plan-mode `bash` call is wrapped as `srt -s <profile> -c '<command>'` and runs inside an OS-level sandbox (Seatbelt/bubblewrap/srt-win) with writes limited to `/tmp` and the plan output directory, secret-path read denials, and a deny-by-default network allowlist. There is no allowlist fallback: when the sandbox is unavailable, `/plan start` fails closed and injects an agent setup guide with exact install commands; `/plan <prompt>` stashes the prompt for the recovered start. Resumed workflows re-probe and leave Plan mode when the sandbox is gone.
+- Persist completed plans as Markdown under a plan output directory (default `plans/`, `planOutputDir` setting): accepted plans are written as `plans/YYYY-MM-DD-<slug>.md`, revisions overwrite the same file, and the TUI renders the finished plan with a path footer. The agent may draft in the sandbox-writable directory; draft updates echo on the bash tool result, and `/plan show` renders the newest draft when no finished plan exists.
+- Add `/plan doctor` for a human-readable sandbox and profile diagnosis, `planSandbox` settings (`allowWrite`, `denyRead`, `allowedDomains`), and the `PI_PLAN_MODE_SRT_PATH` override. Block `powershell` during Plan mode (v1 sandboxes `bash` only). Statusline shows `plan active (srt)`.
+
+### Breaking Changes
+
+- Remove the reviewed bash/PowerShell allowlists and the `safeSubcommands` setting; srt becomes a hard Plan-mode dependency (`npm i -g @anthropic-ai/sandbox-runtime` plus bubblewrap/socat/ripgrep on Linux, ripgrep on macOS).
+
 ## 0.58.3
 
 ### Patch Changes

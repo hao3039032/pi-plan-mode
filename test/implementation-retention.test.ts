@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import type { ImplementationPlanRetention } from "../src/settings.js";
 import { restorePlanModeState } from "../src/state.js";
 import { createMockContext, createMockPi } from "./support.js";

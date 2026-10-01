@@ -1,7 +1,7 @@
 {
   "name": "@hao3039032/pi-plan-mode",
-  "version": "0.58.3",
-  "description": "Fork of @narumitw/pi-plan-mode that admits configured Plan tools activated mid-workflow (e.g. pi-web-access web_enable).",
+  "version": "0.59.0",
+  "description": "Fork of @narumitw/pi-plan-mode: Plan-mode exploration runs inside the Anthropic Sandbox Runtime (srt) OS sandbox; completed plans persist as Markdown in a plans/ directory with TUI echo.",
   "type": "module",
   "license": "MIT",
   "private": true,

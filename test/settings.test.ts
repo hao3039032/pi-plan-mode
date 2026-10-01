@@ -195,47 +195,35 @@ test("Plan-mode settings ignore unknown top-level fields", () => {
   );
 });
 
-test("Plan-mode settings accept arbitrary user-trusted safe subcommands", () => {
+test("Plan-mode settings accept sandbox profile lists and the plan output directory", () => {
   assert.deepEqual(
     normalizePlanModeSettings({
       thinkingLevel: "medium",
       defaultPlanTools: ["read", "bash"],
-      safeSubcommands: {
-        git: ["status", " checkout ", "status"],
-        gh: ["pr merge"],
-        kubectl: ["apply", "get pods"],
-        " git ": ["custom-command"],
+      planOutputDir: " specs ",
+      planSandbox: {
+        allowWrite: ["/tmp", " /var/cache ", "/tmp"],
+        denyRead: ["~/secrets"],
+        allowedDomains: ["api.github.com", "*.npmjs.org"],
       },
     }),
     {
       thinkingLevel: "medium",
       defaultPlanTools: ["read", "bash"],
-      safeSubcommands: {
-        git: ["status", "checkout", "custom-command"],
-        gh: ["pr merge"],
-        kubectl: ["apply", "get pods"],
+      planOutputDir: "specs",
+      planSandbox: {
+        allowWrite: ["/tmp", "/var/cache"],
+        denyRead: ["~/secrets"],
+        allowedDomains: ["api.github.com", "*.npmjs.org"],
       },
     },
   );
-  assert.deepEqual(normalizePlanModeSettings({ safeSubcommands: {} }), {
-    thinkingLevel: "inherit",
-    safeSubcommands: {},
-  });
-  assert.deepEqual(normalizePlanModeSettings({ safeSubcommands: { git: [], gh: [] } }), {
-    thinkingLevel: "inherit",
-    safeSubcommands: { git: [], gh: [] },
-  });
-
-  for (const safeSubcommands of [
-    null,
-    [],
-    { " ": ["get"] },
-    { git: "status" },
-    { git: ["status", 42] },
-    { gh: ["pr view", ""] },
-    { kubectl: ["   "] },
-  ]) {
-    assert.equal(normalizePlanModeSettings({ safeSubcommands }), undefined);
+  assert.deepEqual(normalizePlanModeSettings({ planSandbox: {} }), undefined);
+  for (const planSandbox of [null, [], { unknown: [] }, { allowWrite: "x" }, { denyRead: ["a", ""] }, { allowedDomains: [42] }]) {
+    assert.equal(normalizePlanModeSettings({ planSandbox }), undefined);
+  }
+  for (const planOutputDir of [null, 42, "", "   ", "a\nb"]) {
+    assert.equal(normalizePlanModeSettings({ planOutputDir }), undefined);
   }
 });
 
@@ -249,20 +237,22 @@ test("Plan-mode settings updates create only on explicit save and preserve unkno
     await updatePlanModeSettings({ thinkingLevel: "high", defaultPlanTools: ["read", "bash"] }, { settingsPath });
     await writeFile(
       settingsPath,
-      '{"future":{"kept":true},"thinkingLevel":"high","defaultPlanTools":["read","bash"],"safeSubcommands":{"gh":["pr merge"],"kubectl":["apply"]}}\n',
+      '{"future":{"kept":true},"thinkingLevel":"high","defaultPlanTools":["read","bash"],"planOutputDir":"plans","planSandbox":{"allowWrite":["/cache"]}}\n',
     );
     await updatePlanModeSettings({ thinkingLevel: "medium", defaultPlanTools: null }, { settingsPath });
 
     assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
       future: { kept: true },
       thinkingLevel: "medium",
-      safeSubcommands: { gh: ["pr merge"], kubectl: ["apply"] },
+      planOutputDir: "plans",
+      planSandbox: { allowWrite: ["/cache"] },
     });
     assert.deepEqual(await readPlanModeSettings(settingsPath), {
       kind: "loaded",
       settings: {
         thinkingLevel: "medium",
-        safeSubcommands: { gh: ["pr merge"], kubectl: ["apply"] },
+        planOutputDir: "plans",
+        planSandbox: { allowWrite: ["/cache"] },
       },
     });
   } finally {
@@ -485,18 +475,18 @@ test("Plan-mode settings read legacy files without modifying them", async () => 
   try {
     await writeFile(
       join(directory, "plan-mode.json"),
-      '{"thinkingLevel":"high","safeSubcommands":{"gh":["pr view"]},"futureOption":true}',
+      '{"thinkingLevel":"high","planSandbox":{"allowedDomains":["api.github.com"]},"futureOption":true}',
     );
     const loaded = await readPlanModeSettings();
     assert.equal(loaded.kind, "loaded");
     assert.deepEqual(loaded.kind === "loaded" ? loaded.settings : undefined, {
       thinkingLevel: "high",
-      safeSubcommands: { gh: ["pr view"] },
+      planSandbox: { allowedDomains: ["api.github.com"] },
     });
     assert.match(loaded.notice ?? "", /using legacy/i);
     assert.deepEqual(JSON.parse(await readFile(join(directory, "plan-mode.json"), "utf8")), {
       thinkingLevel: "high",
-      safeSubcommands: { gh: ["pr view"] },
+      planSandbox: { allowedDomains: ["api.github.com"] },
       futureOption: true,
     });
     await assert.rejects(access(join(directory, "pi-plan-mode.json")));

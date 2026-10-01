@@ -6,15 +6,15 @@
 - [Plan reinjection](#plan-reinjection)
 - [Fresh implementation runtime](#fresh-implementation-runtime)
 - [Export destination](#export-destination)
+- [Plan output directory](#plan-output-directory)
+- [Sandbox profile](#sandbox-profile)
 - [Toggle shortcut](#toggle-shortcut)
-- [Safe shell subcommands](#safe-shell-subcommands)
 - [Thinking level and persistence](#thinking-level)
 
 ## ⚙️ Settings
 
-Run `/plan settings` or open **Settings** from an inactive `/plan` menu to edit **Plan thinking**, **Plan policy tools**, **Plan reinjection**, **Fresh model**, **Fresh thinking**, **Export destination**, and **Plan mode shortcut**.
+Run `/plan settings` or open **Settings** from an inactive `/plan` menu to edit **Plan thinking**, **Plan policy tools**, **Plan reinjection**, **Fresh model**, **Fresh thinking**, **Export destination**, **Plan output dir**, **Sandbox write paths**, **Sandbox deny-read**, **Sandbox network**, and **Plan mode shortcut**.
 You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually.
-`safeSubcommands` is JSON-only.
 The optional file is read at session start, watched for changes, and created only by an explicit Settings save or manual edit.
 The shortcut is disabled when `toggleShortcut` is omitted.
 ```json
@@ -28,11 +28,11 @@ The shortcut is disabled when `toggleShortcut` is omitted.
   },
   "defaultImplementationThinkingLevel": "high",
   "defaultPlanExportPath": "PLAN.md",
-  "safeSubcommands": {
-    "git": ["rev-parse", "blame"],
-    "gh": ["pr view", "issue list"],
-    "kubectl": ["get", "apply"],
-    "npm": ["run inspect-custom"]
+  "planOutputDir": "plans",
+  "planSandbox": {
+    "allowWrite": ["/tmp", "/absolute/plans"],
+    "denyRead": ["~/.secrets"],
+    "allowedDomains": []
   },
   "toggleShortcut": "<your_key>"
 }
@@ -63,7 +63,7 @@ Settings shows unresolved names as pending registration; resetting to automatic 
 Non-built-in names in this global setting are an explicit user-risk opt-in, just like selecting them in the pre-start workflow selector.
 Plan mode does not interpret a selected custom tool's arguments or actions: allowing one trusts the whole effective tool.
 Pi resolves tools by name, so if an extension overrides a built-in name, the effective extension tool is selected instead.
-An effective active tool named `bash` or `powershell` remains subject to its limited-shell policy regardless of its source metadata.
+An effective active tool named `bash` runs inside the srt OS sandbox regardless of its source metadata; `powershell` is blocked during Plan mode in v1.
 
 A selection accepted through **Choose tools, then start…** or `/plan tools` is stored in that Pi session and takes precedence over `defaultPlanTools` when the session resumes.
 The global setting remains the policy baseline for fresh sessions and sessions without an explicit selection.
@@ -127,34 +127,27 @@ Other settings retain their existing watched reload behavior, and `/plan` comman
 Avoid conflicts with Pi or other extension shortcuts; the startup value is a registration preference, not a guarantee that Pi accepts it or the terminal sends that key combination.
 Tree navigation and compaction do not apply pending shortcut changes.
 
-### Safe shell subcommands
+### Plan output directory
 
-`safeSubcommands` maps any command prefix to subcommand prefixes that the user chooses to trust completely in limited `bash` and `powershell`.
-For example, `"kubectl": ["get", "apply"]` trusts commands beginning with `kubectl get` or `kubectl apply`, while `"npm": ["run inspect-custom"]` trusts commands beginning with `npm run inspect-custom`.
-Command keys and subcommand entries are trimmed and must be non-empty strings.
-Matches are literal and case-sensitive after leading whitespace in the submitted command is ignored.
-A match requires the complete `<command> <subcommand>` prefix followed by whitespace, a shell control operator, or the end of the submitted command, so `"kubectl": ["apply"]` does not match `kubectl applies`.
-Duplicate values and command keys that become equal after trimming are merged in first-seen order.
-Omitted `safeSubcommands`, an empty object, and empty arrays preserve the default policy.
+`planOutputDir` controls where accepted plans are persisted as Markdown and which directory stays writable inside the sandbox.
+Omit it—or submit an empty value in Settings—to use `plans` under Pi's current working directory.
+The value must be a non-empty string of at most 4,096 characters without terminal control characters or NUL; relative values resolve against the working directory when a Plan workflow starts.
+Accepted `plan_mode_complete` plans are written as `plans/YYYY-MM-DD-<slug>.md` (slug from the first Markdown heading), revisions overwrite the same file, and collisions append `-2`, `-3`, …
+The directory is created on first write, and the agent may draft or iterate Markdown there while planning; each update echoes on the bash tool result and `/plan show` renders the newest draft.
 
-When a configured prefix matches, Plan mode permits the complete submitted command without parsing or applying any command, argument, mutation, chain, redirect, expansion, substitution, multiline, or PowerShell syntax checks.
-For example, `"kubectl": ["apply"]` also permits `kubectl apply -f deployment.yaml && rm -rf build`.
-Likewise, `"gh": ["pr view"]` permits `gh pr view 218 --web`, `gh pr view 218 > pr.txt`, and any trailing shell content.
-The setting therefore delegates the complete shell decision to the user and can allow arbitrary code execution with Pi's permissions.
-It is not a sandbox, confirmation gate, or read-only guarantee.
-Choose entries that are as specific as your workflow permits, and configure them only for commands and repositories you fully trust.
+### Sandbox profile
 
-Commands that do not match still use the built-in fail-closed reviewed policy.
-That default policy includes Git `status`, `log`, `diff`, `show`, `branch`, `remote`, `ls-files`, and `grep`, with command-specific argument checks.
-It rejects output and input redirects, shell expansion and substitution, explicit pager or browser requests, explicit external diff, textconv, filter, or signature helpers, mutating flags, malformed command layouts, and any parsed chain containing an unsafe segment.
-Read-dominant Git validators accept ordinary inspection flags without requiring `--no-textconv` or `--no-ext-diff`; Git may therefore invoke a helper configured by the user or trusted repository even when the command does not request one explicitly.
-Use the negative flags when you want to suppress those configured helpers.
-Mixed read/write surfaces remain narrower: use `git remote show -n` to avoid invoking a transport helper, while mutating `branch` and `remote` forms remain blocked unless explicitly trusted through `safeSubcommands`.
+`planSandbox` tunes the srt OS sandbox that every Plan-mode `bash` call runs in.
+All three keys are optional string arrays; entries must be non-empty and are deduplicated in first-seen order.
 
-Read-only does not mean private: Git inspection can expose repository history and tracked secrets, while configured commands can expose or modify any data available to Pi's process.
-A built-in-policy `git -C <path>` inspection is accepted only when the path keeps Git in Pi's current working directory.
-The default policy reduces accidental mutation and cross-repository executable configuration; configured `safeSubcommands` bypass that protection.
-A non-object `safeSubcommands`, empty command or subcommand string, non-array value, or non-string entry invalidates the entire settings file and triggers the normal warning/default fallback on session start.
+- `allowWrite` adds extra writable absolute paths. `/tmp` and the resolved plan output directory are always writable and cannot be removed.
+- `denyRead` adds extra read-denied paths on top of the built-in secret defaults (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`).
+- `allowedDomains` allows network access from the sandbox (wildcards like `*.npmjs.org`); the default empty list denies every domain.
+
+Paths follow srt syntax (`~` expands to the home directory, gitignore-style globs on macOS).
+Treat `allowWrite` and `allowedDomains` as real security decisions: they widen what arbitrary sandboxed commands may write and which hosts they may reach.
+Set `PI_PLAN_MODE_SRT_PATH` to use an srt binary outside `PATH`; run `/plan doctor` to check the effective profile and runtime health.
+A non-object `planSandbox`, unknown keys, or non-string-array values invalidate the entire settings file and trigger the normal warning/default fallback on session start.
 
 ### Thinking level
 
@@ -165,7 +158,7 @@ The extension snapshots the prior level and restores it on exit only if the leve
 A Settings save does not change Pi's current or default thinking level and takes effect only when the next Plan workflow starts.
 
 Settings saves are serialized in invocation order inside one Pi process.
-Each save re-reads the latest valid document, preserves unknown top-level fields and unedited `safeSubcommands`, then publishes through a same-directory temporary file and rename.
+Each save re-reads the latest valid document, preserves unknown top-level fields and unedited `planSandbox` lists, then publishes through a same-directory temporary file and rename.
 A missing file stays absent until an explicit save.
 Invalid JSON, invalid values, oversized content, non-regular files, and read failures make Settings read-only; the existing bytes and previous effective settings remain.
 This in-process queue is not a cross-process lock, so concurrent separate Pi processes can still race.

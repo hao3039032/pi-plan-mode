@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createRpcHarness, createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test } from "vitest";
-import planMode from "../src/plan-mode.js";
+import planMode from "./support.js";
 import { readPlanModeSettings } from "../src/settings.js";
 import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
@@ -102,7 +102,7 @@ test("customized plan-mode shortcut from settings toggles Plan mode", async () =
 
   await toggle.handler(context.ctx);
   assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 
   await toggle.handler(context.ctx);
   assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
@@ -138,7 +138,7 @@ test("customized plan-mode shortcut rejects mode changes during an active run", 
   await toggle.handler(context.ctx);
   assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
   assert.equal(mock.entries.length, entriesAfterStart);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
 });
 
@@ -151,11 +151,11 @@ test("customized plan-mode shortcut from settings supports ctrl+alt+p", async ()
   await mock.events.get("session_start")?.[0]?.({}, context.ctx);
   const toggle = mock.shortcuts.get("ctrl+alt+p");
   assert.ok(toggle, "custom shortcut should be registered");
-  toggle.handler(context.ctx);
+  await toggle.handler(context.ctx);
   assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 
-  toggle.handler(context.ctx);
+  await toggle.handler(context.ctx);
   assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
   assert.equal(context.statuses.get("plan-mode"), undefined);
 });
@@ -250,7 +250,7 @@ test("the launch menu starts Plan mode only after explicit confirmation", async 
 
   assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
   assert.equal(mock.sentUserMessages.length, 0);
-  assert.equal(context.statuses.get("plan-mode"), "plan active");
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 });
 
 test("launch tool choices remain draft-only until Done starts Plan mode", async () => {
@@ -310,7 +310,7 @@ test("launch tool drafts and help navigation cancel without side effects", async
   tui.press("tui.select.down");
   tui.press("tui.select.confirm");
   await waitForOpenCount(tui, 5, running);
-  assert.match(tui.render().join("\n"), /read-only exploration/i);
+  assert.match(tui.render().join("\n"), /Sandbox Runtime/i);
   tui.press("tui.select.cancel");
   await waitForOpenCount(tui, 6, running);
   tui.press("tui.select.cancel");
@@ -521,7 +521,7 @@ test("/plan tools reuses the pre-start draft and cancellation has no side effect
     await settleWithin(running, `${ending} /plan tools completion`);
 
     assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
-    assert.equal(context.statuses.get("plan-mode"), ending === "done" ? "plan active" : undefined);
+    assert.equal(context.statuses.get("plan-mode"), ending === "done" ? "plan active (srt)" : undefined);
     assert.equal(mock.entries.length > 0, ending === "done");
   }
 });
