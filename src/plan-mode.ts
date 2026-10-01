@@ -1051,6 +1051,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   ) {
     if (state.enabled) {
       if (options.prompt) {
+        if (!ctx.hasUI) {
+          // Print and JSON modes drop extension-triggered turns; fail loudly instead of a silent no-op.
+          throw new Error(
+            "Plan mode is already active, and print/JSON mode cannot deliver a follow-up planning prompt from inside a command. Send it as the next message instead, e.g. pi -p '<your prompt>' with the same session.",
+          );
+        }
         sendPlanModeUserMessage(options.prompt, ctx);
       } else {
         ctx.ui.notify("Plan mode is already active.", "info");
@@ -1112,6 +1118,16 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     ctx.ui.notify("Plan mode enabled. Shell runs in the srt sandbox; I will explore and plan, not modify files.", "info");
     const prompt = options.prompt ?? state.pendingPlanPrompt;
     if (!prompt) return;
+    if (!ctx.hasUI) {
+      // Print and JSON modes drop extension-triggered turns entirely, so the planning prompt
+      // would never reach the model from inside this command handler. Keep it stashed and fail
+      // loudly with the two-message form that print mode does deliver.
+      state = { ...state, pendingPlanPrompt: prompt };
+      persistState();
+      throw new Error(
+        "Plan mode started with the prompt stashed, but print/JSON mode cannot deliver a planning prompt from inside a command. Send it as the next message instead, e.g. pi -p '/plan start' -p '<your planning prompt>', or use an interactive session.",
+      );
+    }
     state = { ...state, pendingPlanPrompt: undefined };
     persistState();
     if (sendPlanModeUserMessage(prompt, ctx)) return;
@@ -1391,26 +1407,23 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   function injectSrtSetupGuide(diagnosis: SrtRuntimeDiagnosis, ctx: ExtensionContext) {
     const summary = describeSrtDiagnosis(diagnosis);
     const guide = (dependencies.buildSetupGuide ?? buildSrtSetupGuide)(diagnosis);
-    let sent = false;
+    if (!ctx.hasUI) {
+      // Print and JSON modes never deliver extension-triggered turns or notifications, so the
+      // guide is useless there; fail the command with the diagnosis instead.
+      throw new Error(
+        `Plan mode cannot start: ${summary}. Install the Anthropic Sandbox Runtime (npm install -g @anthropic-ai/sandbox-runtime) and its platform dependencies, then retry; run /plan doctor in a TUI or RPC session for the full agent setup guide.`,
+      );
+    }
     try {
       if (ctx.isIdle()) pi.sendUserMessage(guide);
       else pi.sendUserMessage(guide, { deliverAs: "followUp" });
-      sent = true;
     } catch {
-      sent = false;
+      // fall through to the notification below
     }
-    if (sent) {
-      if (ctx.hasUI) {
-        ctx.ui.notify(
-          "Plan mode requires the srt sandbox, which is unavailable. A setup guide was sent; approve the install commands, then run /plan start again.",
-          "warning",
-        );
-      }
-      return;
-    }
-    const message = `Plan mode cannot start: ${summary}. Install the Anthropic Sandbox Runtime (npm install -g @anthropic-ai/sandbox-runtime) and its platform dependencies, then retry; run /plan doctor for details.`;
-    if (!ctx.hasUI) throw new Error(message);
-    ctx.ui.notify(message, "warning");
+    ctx.ui.notify(
+      "Plan mode requires the srt sandbox, which is unavailable. A setup guide was sent; approve the install commands, then run /plan start again.",
+      "warning",
+    );
   }
 
   /** Re-probe a restored workflow's sandbox off the event path; failures never become unhandled rejections. */

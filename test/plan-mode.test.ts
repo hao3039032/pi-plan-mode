@@ -934,7 +934,7 @@ test("inline prompt delivery failure rolls back newly entered Plan mode", async 
     throw new Error("Extension context is no longer active");
   };
   planMode(mock.pi);
-  const context = createMockContext();
+  const context = createMockContext({ mode: "tui", hasUI: true });
   await mock.commands.get("plan")?.handler("design it", context.ctx);
   assert.equal(context.statuses.get("plan-mode"), undefined);
   assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "plan_mode_question", "plan_mode_complete"]);
@@ -2286,5 +2286,42 @@ test("legacy plan echoes and write/edit draft echoes show the plan document path
     assert.equal(await result("write-failed", true), undefined);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("print and JSON modes fail loudly when the srt sandbox is unavailable", async () => {
+  for (const mode of ["print", "json"] as const) {
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planModeDefault(mock.pi, sandboxDeps(missingSrtDiagnosis));
+    const context = createMockContext({ mode, hasUI: false });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await assert.rejects(
+      async () => mock.commands.get("plan")?.handler("start", context.ctx),
+      /Plan mode cannot start:.*sandbox-runtime/u,
+    );
+    assert.equal(context.statuses.get("plan-mode"), undefined);
+    assert.equal(mock.sentUserMessages.length, 0, "print/JSON must not queue a guide turn");
+  }
+});
+
+test("print and JSON modes keep the planning prompt stashed and reject instead of silently dropping it", async () => {
+  for (const mode of ["print", "json"] as const) {
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planModeDefault(mock.pi);
+    const context = createMockContext({ mode, hasUI: false });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await assert.rejects(
+      async () => mock.commands.get("plan")?.handler("design the release", context.ctx),
+      /print\/JSON mode cannot deliver a planning prompt.*pi -p/u,
+    );
+    assert.equal(context.statuses.get("plan-mode"), "plan active (srt)", "Plan itself starts");
+    assert.equal(mock.sentUserMessages.length, 0);
+    assert.match(JSON.stringify(mock.entries.at(-1)), /design the release/, "prompt stays stashed");
+
+    // A second /plan <prompt> while active also fails loudly instead of a silent no-op.
+    await assert.rejects(
+      async () => mock.commands.get("plan")?.handler("another prompt", context.ctx),
+      /already active.*print\/JSON mode cannot deliver/u,
+    );
   }
 });

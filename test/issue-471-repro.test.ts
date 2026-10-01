@@ -323,7 +323,7 @@ test("failed implementation delivery restores ready state without retained imple
 test("a failed superseding prompt restores the exact active implementation", async () => {
   const mock = createMockPi({ activeTools: ["read", "edit"] });
   planMode(mock.pi);
-  const context = createMockContext();
+  const context = createMockContext({ mode: "tui", hasUI: true });
   await mock.events.get("session_start")?.[0]?.({}, context.ctx);
   await mock.commands.get("plan")?.handler("start", context.ctx);
   const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")?.execute as
@@ -663,7 +663,7 @@ test("/plan start supersedes an active implementation without starting a model t
 test("starting a new Plan-mode workflow supersedes the active implementation", async () => {
   const mock = createMockPi({ activeTools: ["read", "edit"] });
   planMode(mock.pi);
-  const context = createMockContext();
+  const context = createMockContext({ mode: "tui", hasUI: true });
   await mock.events.get("session_start")?.[0]?.({}, context.ctx);
   await mock.commands.get("plan")?.handler("start", context.ctx);
   const complete = mock.tools.find((candidate) => candidate.name === "plan_mode_complete")?.execute as
