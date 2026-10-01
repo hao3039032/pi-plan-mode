@@ -131,7 +131,7 @@ export function planModeSettingsPath() {
   return join(getAgentDir(), PLAN_MODE_SETTINGS_FILE);
 }
 
-function legacyPlanModeSettingsPath() {
+export function legacyPlanModeSettingsPath() {
   return join(getAgentDir(), LEGACY_PLAN_MODE_SETTINGS_FILE);
 }
 

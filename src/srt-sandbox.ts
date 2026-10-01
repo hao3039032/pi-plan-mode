@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { access, chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 /**
@@ -17,8 +18,12 @@ import { tmpdir } from "node:os";
 export const SRT_ENV_PATH_OVERRIDE = "PI_PLAN_MODE_SRT_PATH";
 export const SRT_PROBE_TIMEOUT_MS = 15_000;
 
-/** Scratch space every sandbox profile keeps writable. */
-export const SRT_SCRATCH_WRITE_PATH = "/tmp";
+/** Prefix of the per-workflow private scratch directory created under os.tmpdir(). */
+export const SRT_SCRATCH_DIR_PREFIX = "pi-plan-mode-scratch-";
+const SRT_SCRATCH_DIR_PATTERN = /^pi-plan-mode-scratch-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+/** Basename of a profile written by srtProfileSettingsPath for a workflow or `/plan doctor`. */
+export const SRT_PROFILE_FILE_PATTERN =
+  /^pi-plan-mode-srt-(?:doctor-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/u;
 
 /** Secret locations denied for reads unless the user narrows the profile. */
 export const DEFAULT_SRT_DENY_READ = [
@@ -33,43 +38,74 @@ export const DEFAULT_SRT_DENY_READ = [
 
 export interface SrtSandboxProfile {
   allowWrite: string[];
+  /** Paths the sandbox may never write; srt gives denyWrite precedence over allowWrite. */
+  denyWrite: string[];
   denyRead: string[];
   allowedDomains: string[];
 }
 
+export interface PlanSandboxProfileInput {
+  /** Plan output directory: the only project path the sandbox may write. */
+  outputDir: string;
+  /** Per-workflow private scratch directory exported to sandboxed commands as TMPDIR. */
+  scratchDir?: string;
+  /** Directory holding srt profile files; always denied for writes so a command cannot rewrite its own profile. */
+  profileDir: string;
+  /** Extra paths that must stay unwritable regardless of user allowWrite (the pi agent dir, pi-plan-mode settings). */
+  protectedPaths: readonly string[];
+  /** User planSandbox settings extending the defaults. */
+  allowWrite?: readonly string[];
+  denyRead?: readonly string[];
+  allowedDomains?: readonly string[];
+}
+
+/** Build the Plan-mode srt profile: writes only in the output dir, scratch dir, and user extras; profile and settings files always write-denied. */
+export function buildPlanSandboxProfile(input: PlanSandboxProfileInput): SrtSandboxProfile {
+  return {
+    allowWrite: dedupe([input.outputDir, ...(input.scratchDir ? [input.scratchDir] : []), ...(input.allowWrite ?? [])]),
+    denyWrite: dedupe([input.profileDir, ...input.protectedPaths]),
+    denyRead: dedupe([...DEFAULT_SRT_DENY_READ, ...(input.denyRead ?? [])]),
+    allowedDomains: dedupe(input.allowedDomains ?? []),
+  };
+}
+
+function dedupe(values: readonly string[]) {
+  return Array.from(new Set(values));
+}
+
 export type SrtPlatform = "linux" | "darwin" | "win32" | "other";
 
+/** Linux package managers recognized by the setup guide, in PATH detection order. */
+export type SrtLinuxPackageManager = "pacman" | "apt" | "dnf" | "zypper";
+
+export const SRT_LINUX_PACKAGE_MANAGERS: readonly { manager: SrtLinuxPackageManager; binary: string }[] = [
+  { manager: "pacman", binary: "pacman" },
+  { manager: "apt", binary: "apt-get" },
+  { manager: "dnf", binary: "dnf" },
+  { manager: "zypper", binary: "zypper" },
+];
+
+const SRT_LINUX_INSTALL_COMMANDS: Record<SrtLinuxPackageManager, (packages: string) => string> = {
+  pacman: (packages) => `sudo pacman -S --needed ${packages}`,
+  apt: (packages) => `sudo apt-get install -y ${packages}`,
+  dnf: (packages) => `sudo dnf install -y ${packages}`,
+  zypper: (packages) => `sudo zypper install -y ${packages}`,
+};
+
 export interface SrtDependencyRule {
+  /** Executable looked up on PATH. */
   name: string;
+  /** Package providing the executable (same name across the supported package managers). */
   label: string;
-  install: Partial<Record<"apt" | "dnf" | "pacman" | "brew", string>>;
 }
 
 export const SRT_LINUX_DEPENDENCIES: readonly SrtDependencyRule[] = [
-  {
-    name: "bwrap",
-    label: "bubblewrap",
-    install: { apt: "sudo apt-get install -y bubblewrap", dnf: "sudo dnf install -y bubblewrap", pacman: "sudo pacman -S --noconfirm bubblewrap" },
-  },
-  {
-    name: "socat",
-    label: "socat",
-    install: { apt: "sudo apt-get install -y socat", dnf: "sudo dnf install -y socat", pacman: "sudo pacman -S --noconfirm socat" },
-  },
-  {
-    name: "rg",
-    label: "ripgrep",
-    install: { apt: "sudo apt-get install -y ripgrep", dnf: "sudo dnf install -y ripgrep", pacman: "sudo pacman -S --noconfirm ripgrep" },
-  },
+  { name: "bwrap", label: "bubblewrap" },
+  { name: "socat", label: "socat" },
+  { name: "rg", label: "ripgrep" },
 ];
 
-export const SRT_MACOS_DEPENDENCIES: readonly SrtDependencyRule[] = [
-  {
-    name: "rg",
-    label: "ripgrep",
-    install: { brew: "brew install ripgrep" },
-  },
-];
+export const SRT_MACOS_DEPENDENCIES: readonly SrtDependencyRule[] = [{ name: "rg", label: "ripgrep" }];
 
 export interface SrtProbeOutcome {
   code: number | null;
@@ -86,6 +122,8 @@ export interface SrtRuntimeDiagnosis {
   missingDependencies: string[];
   /** Set when srt ran but the sandboxed probe command failed. */
   probeFailure?: { stderr: string };
+  /** Linux package manager found on PATH, used to emit matching install commands. */
+  linuxPackageManager?: SrtLinuxPackageManager;
 }
 
 export interface SrtRuntimeProbeOptions {
@@ -93,7 +131,7 @@ export interface SrtRuntimeProbeOptions {
   env?: NodeJS.ProcessEnv;
   /** Replacement for the default spawn-based probe, for tests. */
   runProbe?: (srtCommand: string, settingsPath: string) => Promise<SrtProbeOutcome>;
-  /** Replacement for PATH dependency lookups, for tests. */
+  /** Replacement for PATH executable lookups (dependencies and package managers), for tests. */
   checkDependency?: (name: string, env: NodeJS.ProcessEnv) => Promise<boolean>;
 }
 
@@ -103,13 +141,27 @@ export function shellQuoteSingle(value: string) {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-/** Wrap a bash tool command so pi executes it inside the SRT sandbox; undefined when unquotable. */
-export function wrapCommandForSrt(command: string, srtPath: string, settingsPath: string) {
+/**
+ * Wrap a bash tool command so pi executes it inside the SRT sandbox; undefined when unquotable.
+ *
+ * srt replaces the child's TMPDIR with `CLAUDE_CODE_TMPDIR` (default `/tmp/claude`), so the
+ * private scratch directory is handed over through that variable. Setting TMPDIR on srt itself
+ * would only move srt's own host-side sockets into the sandbox-writable scratch directory.
+ */
+export function wrapCommandForSrt(command: string, srtPath: string, settingsPath: string, scratchDir: string) {
   const quotedCommand = shellQuoteSingle(command);
   const quotedSettings = shellQuoteSingle(settingsPath);
-  if (quotedCommand === undefined || quotedSettings === undefined) return undefined;
   const quotedSrt = shellQuoteSingle(srtPath);
-  return `${quotedSrt ?? srtPath} -s ${quotedSettings} -c ${quotedCommand}`;
+  const quotedScratch = shellQuoteSingle(scratchDir);
+  if (
+    quotedCommand === undefined ||
+    quotedSettings === undefined ||
+    quotedSrt === undefined ||
+    quotedScratch === undefined
+  ) {
+    return undefined;
+  }
+  return `CLAUDE_CODE_TMPDIR=${quotedScratch} ${quotedSrt} -s ${quotedSettings} -c ${quotedCommand}`;
 }
 
 export function buildSrtSettingsContents(profile: SrtSandboxProfile) {
@@ -123,7 +175,7 @@ export function buildSrtSettingsContents(profile: SrtSandboxProfile) {
         denyRead: profile.denyRead,
         allowRead: [],
         allowWrite: profile.allowWrite,
-        denyWrite: [],
+        denyWrite: profile.denyWrite,
       },
     },
     null,
@@ -131,21 +183,53 @@ export function buildSrtSettingsContents(profile: SrtSandboxProfile) {
   )}\n`;
 }
 
-export function srtProfileSettingsPath(sessionKey: string) {
-  return join(tmpdir(), `pi-plan-mode-srt-${sessionKey}.json`);
+/**
+ * Profile file path inside `profileDir`. The directory must never be sandbox-writable (srt
+ * re-reads `-s` settings on every call), so callers pass a private directory outside os.tmpdir().
+ */
+export function srtProfileSettingsPath(profileDir: string, sessionKey: string) {
+  return join(profileDir, `pi-plan-mode-srt-${sessionKey}.json`);
 }
 
+/** Write a profile as a fresh 0600 file inside a 0700 profile directory. */
 export async function writeSrtProfile(settingsPath: string, profile: SrtSandboxProfile) {
-  await mkdir(join(settingsPath, ".."), { recursive: true });
+  const profileDir = dirname(settingsPath);
+  await mkdir(profileDir, { recursive: true, mode: 0o700 });
+  await chmod(profileDir, 0o700);
   await writeFile(settingsPath, buildSrtSettingsContents(profile), {
     encoding: "utf8",
     mode: 0o600,
+    flag: "wx",
   });
 }
 
-export async function removeSrtProfile(settingsPath: string | undefined) {
-  if (!settingsPath) return;
+/** Remove a profile created by srtProfileSettingsPath in `profileDir`; other paths (e.g. tampered state) are ignored. */
+export async function removeSrtProfile(settingsPath: string | undefined, profileDir: string) {
+  if (!settingsPath || !isSrtProfilePath(settingsPath, profileDir)) return;
   await rm(settingsPath, { force: true }).catch(() => undefined);
+}
+
+export function isSrtProfilePath(path: string, profileDir: string) {
+  const absolute = resolve(path);
+  return dirname(absolute) === resolve(profileDir) && SRT_PROFILE_FILE_PATTERN.test(basename(absolute));
+}
+
+/** Create a per-workflow private (0700) scratch directory under os.tmpdir(). */
+export async function createSrtScratchDir() {
+  const scratchDir = join(tmpdir(), `${SRT_SCRATCH_DIR_PREFIX}${randomUUID()}`);
+  await mkdir(scratchDir, { mode: 0o700 });
+  return scratchDir;
+}
+
+/** Remove a scratch directory created by createSrtScratchDir; other paths (e.g. tampered state) are ignored. */
+export async function removeSrtScratchDir(scratchDir: string | undefined) {
+  if (!scratchDir || !isSrtScratchDir(scratchDir)) return;
+  await rm(scratchDir, { recursive: true, force: true }).catch(() => undefined);
+}
+
+export function isSrtScratchDir(path: string) {
+  const absolute = resolve(path);
+  return dirname(absolute) === resolve(tmpdir()) && SRT_SCRATCH_DIR_PATTERN.test(basename(absolute));
 }
 
 async function findOnPath(name: string, env: NodeJS.ProcessEnv) {
@@ -232,9 +316,22 @@ export async function diagnoseSrtRuntime(
   for (const rule of platformDependencies(platform)) {
     if (!(await resolveDependency(rule.name, env))) missingDependencies.push(rule.name);
   }
+  const detectPackageManager = async () => {
+    if (platform !== "linux") return {};
+    for (const candidate of SRT_LINUX_PACKAGE_MANAGERS) {
+      if (await resolveDependency(candidate.binary, env)) return { linuxPackageManager: candidate.manager };
+    }
+    return {};
+  };
 
   if (missingDependencies.length > 0 || !srtCommand) {
-    return { ok: false, platform, ...(srtCommand ? { srtCommand } : {}), missingDependencies };
+    return {
+      ok: false,
+      platform,
+      ...(srtCommand ? { srtCommand } : {}),
+      missingDependencies,
+      ...(await detectPackageManager()),
+    };
   }
 
   const runProbe =
@@ -244,13 +341,18 @@ export async function diagnoseSrtRuntime(
     return { ok: true, platform, srtCommand, missingDependencies: [] };
   }
   const detail = outcome.error ?? (outcome.stderr.trim() || `exit code ${outcome.code ?? "unknown"}`);
-  return { ok: false, platform, srtCommand, missingDependencies: [], probeFailure: { stderr: detail } };
+  return {
+    ok: false,
+    platform,
+    srtCommand,
+    missingDependencies: [],
+    probeFailure: { stderr: detail },
+    ...(await detectPackageManager()),
+  };
 }
 
 export interface SrtSetupGuideOptions {
   env?: NodeJS.ProcessEnv;
-  /** Package-manager key used to pick install commands on Linux, for tests. */
-  linuxPackageManager?: "apt" | "dnf" | "pacman";
 }
 
 const SRT_NPM_INSTALL = "npm install -g @anthropic-ai/sandbox-runtime";
@@ -283,18 +385,21 @@ export function buildSrtSetupGuide(diagnosis: SrtRuntimeDiagnosis, options: SrtS
   const commands = new Set<string>();
   if (diagnosis.missingDependencies.includes("srt")) commands.add(SRT_NPM_INSTALL);
   if (diagnosis.platform === "linux") {
-    for (const rule of SRT_LINUX_DEPENDENCIES) {
-      if (diagnosis.missingDependencies.includes(rule.name)) {
-        const install = rule.install[options.linuxPackageManager ?? "apt"] ?? rule.install.apt;
-        commands.add(install ?? `install ${rule.label}`);
-      }
-    }
+    const packages = missingPackages(SRT_LINUX_DEPENDENCIES, diagnosis.missingDependencies);
+    const manager = diagnosis.linuxPackageManager;
+    if (packages.length > 0 && manager) commands.add(SRT_LINUX_INSTALL_COMMANDS[manager](packages.join(" ")));
     for (const command of commands) lines.push(`- \`${command}\``);
-    lines.push("- Ubuntu 24.04+ may also need: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (bubblewrap needs capability-bearing user namespaces).");
-  } else if (diagnosis.platform === "darwin") {
-    for (const rule of SRT_MACOS_DEPENDENCIES) {
-      if (diagnosis.missingDependencies.includes(rule.name)) commands.add(rule.install.brew ?? `install ${rule.label}`);
+    if (packages.length > 0 && !manager) {
+      lines.push(
+        `- No supported package manager (pacman, apt-get, dnf, zypper) was found on PATH. Install these packages with your distribution's package manager: ${packages.join(", ")}.`,
+      );
     }
+    if (manager === "apt" || !manager) {
+      lines.push("- Ubuntu 24.04+ may also need: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (bubblewrap needs capability-bearing user namespaces).");
+    }
+  } else if (diagnosis.platform === "darwin") {
+    const packages = missingPackages(SRT_MACOS_DEPENDENCIES, diagnosis.missingDependencies);
+    if (packages.length > 0) commands.add(`brew install ${packages.join(" ")}`);
     for (const command of commands) lines.push(`- \`${command}\``);
   } else if (diagnosis.platform === "win32") {
     for (const command of commands) lines.push(`- \`${command}\``);
@@ -313,6 +418,10 @@ export function buildSrtSetupGuide(diagnosis: SrtRuntimeDiagnosis, options: SrtS
     "There is intentionally no non-sandbox fallback for Plan-mode shell access.",
   );
   return lines.join("\n");
+}
+
+function missingPackages(rules: readonly SrtDependencyRule[], missingDependencies: readonly string[]) {
+  return rules.filter((rule) => missingDependencies.includes(rule.name)).map((rule) => rule.label);
 }
 
 export function summarizeProbeFailure(stderr: string) {

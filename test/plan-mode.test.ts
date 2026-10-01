@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { test, vi } from "vitest";
 import { planModeCompleted } from "../src/completion-tool.js";
 import { FINALIZE_PLAN_PROMPT, RETRY_FINALIZE_PLAN_PROMPT } from "../src/finalization-request.js";
+import { planDocFilename } from "../src/plan-docs.js";
 import planModeDefault, {
   buildPlanModePrompt,
   completePlanArguments,
@@ -15,7 +18,17 @@ import planModeDefault, {
   stripProposedPlanBlocks,
   stripProposedPlanBlocksFromMessage,
 } from "../src/plan-mode.js";
-import { createMockContext, createMockPi, missingSrtDiagnosis, planMode, sandboxDeps } from "./support.js";
+import {
+  builtinTool,
+  createMockContext,
+  createMockPi,
+  extensionTool,
+  missingSrtDiagnosis,
+  passingSandboxDiagnosis,
+  planMode,
+  sandboxDeps,
+  TEST_SRT_PROFILE_DIR,
+} from "./support.js";
 import { renderMockWidget } from "./widget-support.js";
 
 test("plan-mode registers question tools, command, and safety hooks without a CLI flag", () => {
@@ -1356,16 +1369,17 @@ test("Plan prompt embeds the sandbox section only when sandbox info is provided"
   const bare = buildPlanModePrompt();
   assert.doesNotMatch(bare, /Sandboxed exploration/);
   const prompt = buildPlanModePrompt({
-    writePaths: ["/tmp", "/repo/plans"],
+    writePaths: ["/repo/plans"],
     planOutputDir: "/repo/plans",
     allowedDomains: [],
   });
   assert.match(prompt, /Sandboxed exploration/);
-  assert.match(prompt, /writes are allowed only in: \/tmp, \/repo\/plans/);
+  assert.match(prompt, /writes are allowed only in: \/repo\/plans, plus a private scratch directory exported as \$TMPDIR/);
+  assert.match(prompt, /\/tmp, which is read-only/);
   assert.match(prompt, /denied for every domain/);
-  assert.match(prompt, /\/repo\/plans\//);
+  assert.match(prompt, /\/repo\/plans\/, from the shell or with the write\/edit tools/);
   const networked = buildPlanModePrompt({
-    writePaths: ["/tmp"],
+    writePaths: ["/repo/plans"],
     planOutputDir: "/repo/plans",
     allowedDomains: ["api.github.com"],
   });
@@ -1436,7 +1450,10 @@ test("plan workflows wrap every bash command with the srt sandbox and keep other
   const input = { command: "cat README.md | grep 'plan' > /tmp/out.txt", timeout: 30_000 };
   const result = await mock.events.get("tool_call")?.[0]?.({ toolName: "bash", input }, context.ctx);
   assert.equal(result, undefined);
-  assert.match(input.command, /^'\/usr\/local\/bin\/srt' -s '.*pi-plan-mode-srt-.*\.json' -c '/);
+  assert.match(
+    input.command,
+    /^CLAUDE_CODE_TMPDIR='[^']*pi-plan-mode-scratch-[^']*' '\/usr\/local\/bin\/srt' -s '[^']*\/srt\/pi-plan-mode-srt-[^']*\.json' -c '/,
+  );
   assert.match(input.command, /cat README\.md \| grep '\\''plan'\\'' > \/tmp\/out\.txt'$/);
   assert.equal(input.timeout, 30_000);
 
@@ -1479,6 +1496,35 @@ test("restored workflows re-probe the sandbox and leave Plan mode when it is una
   assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /SRT SETUP GUIDE missing/);
 });
 
+test("a failed restore re-probe removes the restored workflow's recorded sandbox profile", async () => {
+  await mkdir(TEST_SRT_PROFILE_DIR, { recursive: true, mode: 0o700 });
+  const restoredProfile = join(TEST_SRT_PROFILE_DIR, `pi-plan-mode-srt-${randomUUID()}.json`);
+  await writeFile(restoredProfile, "{}\n", { mode: 0o600 });
+  const mock = createMockPi({ activeTools: ["read", "bash"] });
+  planModeDefault(mock.pi, sandboxDeps(missingSrtDiagnosis));
+  const restoredState = {
+    type: "custom",
+    customType: "plan-mode-state",
+    data: {
+      enabled: true,
+      awaitingAction: false,
+      sandbox: { srtPath: "/usr/local/bin/srt", settingsPath: restoredProfile },
+    },
+  };
+  const context = createMockContext({
+    hasUI: true,
+    sessionManager: {
+      getBranch: () => [restoredState],
+      getEntries: () => [restoredState],
+    },
+  });
+  await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+  await vi.waitFor(() => {
+    assert.equal(context.statuses.get("plan-mode"), undefined);
+  });
+  assert.equal(existsSync(restoredProfile), false);
+});
+
 test("completed plans persist to the plan output directory and revisions overwrite the same document", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-doc-flow-"));
   try {
@@ -1490,12 +1536,21 @@ test("completed plans persist to the plan output directory and revisions overwri
 
     const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete");
     assert.ok(complete);
-    await complete.execute("id-1", { plan: "# Ship the sandbox\n\nfirst" }, undefined, undefined, context.ctx);
-    const { readFile, readdir } = await import("node:fs/promises");
+    const first = (await complete.execute(
+      "id-1",
+      { plan: "# Ship the sandbox\n\nfirst" },
+      undefined,
+      undefined,
+      context.ctx,
+    )) as { content: Array<{ text: string }>; details: { plan: string } };
     const files = await readdir(join(directory, "plans"));
-    assert.deepEqual(files, ["ship-the-sandbox.md"].map((name) => `${new Date().toISOString().slice(0, 10)}-${name}`));
+    assert.deepEqual(files, [planDocFilename(new Date(), "ship-the-sandbox")]);
     const docPath = join(directory, "plans", files[0] as string);
     assert.equal(await readFile(docPath, "utf8"), "# Ship the sandbox\n\nfirst\n");
+    // The TUI echo ends with the document path; the stored plan never includes the footer.
+    assert.equal(first.content[0]?.text, `**Proposed Plan**\n\n# Ship the sandbox\n\nfirst\n\n---\n📄 plans/${files[0]}`);
+    assert.equal(first.details.plan, "# Ship the sandbox\n\nfirst");
+    assert.equal(latestPlanState(mock)?.latestPlan, "# Ship the sandbox\n\nfirst");
 
     await complete.execute("id-2", { plan: "# Ship the sandbox\n\nrevised" }, undefined, undefined, context.ctx);
     assert.deepEqual(await readdir(join(directory, "plans")), [files[0]]);
@@ -1514,9 +1569,9 @@ test("bash results annotate sandbox denials and plan draft updates", async () =>
     await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
     await mock.commands.get("plan")?.handler("start", context.ctx);
 
-    const callInput = { command: "cat plans/draft.md" };
+    // The command never names the output directory; detection checks the directory itself.
+    const callInput = { command: "sh ./scripts/make-draft.sh" };
     await mock.events.get("tool_call")?.[0]?.({ toolName: "bash", input: callInput, toolCallId: "call-1" }, context.ctx);
-    const { writeFile, mkdir } = await import("node:fs/promises");
     // Keep the draft's mtime strictly after the tracked call start.
     await new Promise((resolve) => setTimeout(resolve, 10));
     await mkdir(join(directory, "plans"), { recursive: true });
@@ -1550,6 +1605,221 @@ test("bash results annotate sandbox denials and plan draft updates", async () =>
       context.ctx,
     );
     assert.equal(cleanResult, undefined);
+
+    // A later bash call that touches no Markdown in the output directory is not annotated.
+    await mock.events.get("tool_call")?.[0]?.(
+      { toolName: "bash", input: { command: "ls" }, toolCallId: "call-3" },
+      context.ctx,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await writeFile(join(directory, "plans", "notes.txt"), "not markdown");
+    const quietResult = await mock.events.get("tool_result")?.[0]?.(
+      {
+        type: "tool_result",
+        toolName: "bash",
+        toolCallId: "call-3",
+        input: { command: "ls" },
+        content: [{ type: "text", text: "README.md" }],
+        isError: false,
+      },
+      context.ctx,
+    );
+    assert.equal(quietResult, undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function latestPlanState(mock: ReturnType<typeof createMockPi>) {
+  return mock.entries.filter((entry) => entry.customType === "plan-mode-state").at(-1)?.data as
+    | { latestPlan?: string; sandbox?: { settingsPath?: string; scratchDir?: string } }
+    | undefined;
+}
+
+async function startPlanIn(directory: string, options: Parameters<typeof createMockPi>[0]) {
+  const mock = createMockPi(options);
+  planMode(mock.pi);
+  const context = createMockContext({ cwd: directory, hasUI: true });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  await mock.commands.get("plan")?.handler("start", context.ctx);
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+  const call = async (toolName: string, input: unknown, toolCallId = `${toolName}-${Math.random()}`) =>
+    (await mock.events.get("tool_call")?.[0]?.({ toolName, input, toolCallId }, context.ctx)) as
+      | { block?: boolean; reason?: string }
+      | undefined;
+  return { mock, context, call };
+}
+
+test("Plan start creates a missing plan output directory but /plan doctor does not", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-outdir-"));
+  try {
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi);
+    const context = createMockContext({ cwd: directory, hasUI: true });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await mock.commands.get("plan")?.handler("doctor", context.ctx);
+    assert.equal(existsSync(join(directory, "plans")), false);
+    assert.match(context.notifications.at(-1)?.message ?? "", /missing; Plan start creates it/u);
+
+    await mock.commands.get("plan")?.handler("start", context.ctx);
+    assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+    assert.equal((await stat(join(directory, "plans"))).isDirectory(), true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the srt profile lives in the private agent profile dir and write-denies itself and the settings", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-profile-"));
+  try {
+    const { mock, context, call } = await startPlanIn(directory, { activeTools: ["read", "bash"] });
+    const input = { command: "true" };
+    assert.equal(await call("bash", input), undefined);
+    const settingsPath = /-s '([^']+)'/u.exec(input.command)?.[1];
+    const scratchDir = /^CLAUDE_CODE_TMPDIR='([^']+)'/u.exec(input.command)?.[1];
+    assert.ok(settingsPath && scratchDir);
+    const agentDir = process.env.PI_CODING_AGENT_DIR as string;
+    const profileDir = TEST_SRT_PROFILE_DIR;
+    assert.equal(dirname(settingsPath), profileDir);
+    assert.equal(dirname(scratchDir), tmpdir());
+    assert.equal((await stat(profileDir)).mode & 0o777, 0o700);
+    assert.equal((await stat(settingsPath)).mode & 0o777, 0o600);
+    assert.equal((await stat(scratchDir)).mode & 0o777, 0o700);
+
+    const profile = JSON.parse(await readFile(settingsPath, "utf8")) as {
+      filesystem: { allowWrite: string[]; denyWrite: string[] };
+    };
+    const isAtOrUnder = (path: string, entry: string) => path === entry || path.startsWith(`${entry}/`);
+    assert.deepEqual(profile.filesystem.allowWrite, [join(directory, "plans"), scratchDir]);
+    for (const entry of profile.filesystem.allowWrite) {
+      assert.equal(isAtOrUnder(settingsPath, entry), false, entry);
+    }
+    assert.ok(profile.filesystem.denyWrite.some((entry) => isAtOrUnder(settingsPath, entry)));
+    assert.ok(profile.filesystem.denyWrite.includes(join(agentDir, "pi-plan-mode.json")));
+    // The whole pi agent dir (sessions, settings, default profile dir) is write-denied.
+    assert.ok(profile.filesystem.denyWrite.includes(agentDir));
+    assert.deepEqual(latestPlanState(mock)?.sandbox?.scratchDir, scratchDir);
+
+    await mock.commands.get("plan")?.handler("exit", context.ctx);
+    await vi.waitFor(() => {
+      assert.equal(existsSync(settingsPath), false);
+      assert.equal(existsSync(scratchDir), false);
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("built-in write/edit are admitted only for real paths inside the plan output directory", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-write-"));
+  try {
+    const { mock, context, call } = await startPlanIn(directory, { activeTools: ["read", "bash", "write", "edit"] });
+    const plansDir = join(directory, "plans");
+
+    assert.equal(await call("write", { path: "plans/draft.md", content: "# Draft" }), undefined);
+    assert.equal(await call("write", { path: "@plans/nested/draft.md", content: "# Draft" }), undefined);
+    assert.equal(
+      await call("edit", { path: join(plansDir, "draft.md"), edits: [{ oldText: "a", newText: "b" }] }),
+      undefined,
+    );
+
+    const blocked = async (toolName: string, input: unknown) => {
+      const result = await call(toolName, input);
+      assert.equal(result?.block, true, JSON.stringify(input));
+      assert.match(result?.reason ?? "", new RegExp(`mutating tool '${toolName}'`, "u"));
+    };
+    await blocked("write", { path: "README.md", content: "x" });
+    await blocked("edit", { path: "src/index.ts", edits: [{ oldText: "a", newText: "b" }] });
+    await blocked("write", { path: "plans/../README.md", content: "x" });
+    await blocked("write", { path: "plans", content: "x" });
+    await blocked("write", { path: "/etc/pi-plan-mode-test.md", content: "x" });
+    await blocked("write", { content: "x" });
+
+    // Symlinks inside the output directory cannot redirect writes outside it.
+    const outside = join(directory, "outside");
+    await mkdir(outside);
+    await mkdir(plansDir, { recursive: true });
+    await writeFile(join(outside, "target.md"), "keep");
+    await symlink(outside, join(plansDir, "escape-dir"));
+    await symlink(join(outside, "target.md"), join(plansDir, "escape-file.md"));
+    await blocked("write", { path: "plans/escape-dir/x.md", content: "x" });
+    await blocked("edit", { path: "plans/escape-file.md", edits: [{ oldText: "keep", newText: "x" }] });
+
+    // update_plan stays blocked.
+    const updatePlan = await call("update_plan", {});
+    assert.equal(updatePlan?.block, true);
+    assert.match(updatePlan?.reason ?? "", /update_plan/u);
+
+    // An admitted write is tracked so the draft annotation follows it.
+    assert.equal(await call("write", { path: "plans/annotated.md", content: "# A" }, "write-annotated"), undefined);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await writeFile(join(plansDir, "annotated.md"), "# A");
+    const annotated = (await mock.events.get("tool_result")?.[0]?.(
+      {
+        type: "tool_result",
+        toolName: "write",
+        toolCallId: "write-annotated",
+        input: { path: "plans/annotated.md", content: "# A" },
+        content: [{ type: "text", text: "Successfully wrote to plans/annotated.md" }],
+        isError: false,
+      },
+      context.ctx,
+    )) as { content: Array<{ text?: string }> };
+    assert.match(annotated.content.at(-1)?.text ?? "", /📄 Plan draft updated → plans\/annotated\.md \(\/plan show to view\)/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("write/edit stay blocked for the plan output directory when inactive or overridden by an extension", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-write-blocked-"));
+  try {
+    const inactive = await startPlanIn(directory, {
+      activeTools: ["read", "bash"],
+      allTools: [builtinTool("read"), builtinTool("bash"), builtinTool("write"), builtinTool("edit")],
+    });
+    for (const toolName of ["write", "edit"]) {
+      const result = await inactive.call(toolName, { path: "plans/draft.md", content: "x", edits: [] });
+      assert.equal(result?.block, true, toolName);
+    }
+
+    const overridden = await startPlanIn(directory, {
+      activeTools: ["read", "bash", "write"],
+      allTools: [builtinTool("read"), builtinTool("bash"), extensionTool("write")],
+    });
+    const result = await overridden.call("write", { path: "plans/draft.md", content: "x" });
+    assert.equal(result?.block, true);
+    assert.match(result?.reason ?? "", /mutating tool 'write'/u);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the ready-plan menu lists the persisted plan document path", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-ready-doc-"));
+  try {
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
+    let observedTitle = "";
+    const context = createMockContext({
+      cwd: directory,
+      mode: "tui",
+      hasUI: true,
+      select: async (title: string) => {
+        observedTitle = title;
+        return "Stay in Plan mode";
+      },
+    });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await mock.commands.get("plan")?.handler("start", context.ctx);
+    const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete");
+    assert.ok(complete);
+    await complete.execute("id-1", { plan: "# Ready doc\n\nbody" }, undefined, undefined, context.ctx);
+    await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
+    const [file] = await readdir(join(directory, "plans"));
+    assert.ok(file);
+    assert.match(observedTitle, /Proposed plan ready/u);
+    assert.ok(observedTitle.includes(`📄 plans/${file}`), observedTitle);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -1565,4 +1835,456 @@ test("plan doctor reports the sandbox diagnosis", async () => {
   assert.match(notification, /srt sandbox: OK \(\/usr\/local\/bin\/srt\)/);
   assert.match(notification, /Plan output directory:/);
   assert.match(notification, /Sandbox network domains: none/);
+});
+
+type PlanModeTestDependencies = Parameters<typeof planModeDefault>[1];
+
+function restoredPlanContext(data: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
+  const entry = { type: "custom", customType: "plan-mode-state", data };
+  return createMockContext({
+    hasUI: true,
+    sessionManager: { getBranch: () => [entry], getEntries: () => [entry] },
+    ...overrides,
+  });
+}
+
+function completeTool(mock: ReturnType<typeof createMockPi>) {
+  const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete");
+  assert.ok(complete);
+  return (plan: string, ctx: unknown) => complete.execute("complete", { plan }, undefined, undefined, ctx);
+}
+
+function planStateEntry(mock: ReturnType<typeof createMockPi>) {
+  return mock.entries.filter((entry) => entry.customType === "plan-mode-state").at(-1)?.data as
+    | {
+        enabled?: boolean;
+        planDocPath?: string;
+        sandbox?: { settingsPath?: string; scratchDir?: string; outputDir?: string; allowWrite?: string[] };
+      }
+    | undefined;
+}
+
+async function readProfile(settingsPath: string | undefined) {
+  assert.ok(settingsPath);
+  return JSON.parse(await readFile(settingsPath, "utf8")) as {
+    network: { allowedDomains: string[] };
+    filesystem: { allowWrite: string[]; denyRead: string[]; denyWrite: string[] };
+  };
+}
+
+test("plan documents never follow a planted dangling symlink or a link swapped in before a revision", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-doc-attack-")));
+  try {
+    const { mock, context } = await startPlanIn(directory, { activeTools: ["read", "bash"] });
+    const plansDir = join(directory, "plans");
+    const outside = join(directory, "outside");
+    await mkdir(outside);
+    const predictable = join(plansDir, planDocFilename(new Date(), "ship-it"));
+    await symlink(join(outside, "victim.md"), predictable);
+
+    const complete = completeTool(mock);
+    await complete("# Ship it\n\nfirst", context.ctx);
+    assert.equal(existsSync(join(outside, "victim.md")), false);
+    const firstDoc = planStateEntry(mock)?.planDocPath;
+    assert.equal(firstDoc, predictable.replace(/\.md$/u, "-2.md"));
+    assert.equal(await readFile(firstDoc as string, "utf8"), "# Ship it\n\nfirst\n");
+
+    // A symlink swapped in for the recorded document is abandoned, not followed.
+    await rm(firstDoc as string);
+    await symlink(join(outside, "swapped.md"), firstDoc as string);
+    await complete("# Ship it\n\nsecond", context.ctx);
+    assert.equal(existsSync(join(outside, "swapped.md")), false);
+    const secondDoc = planStateEntry(mock)?.planDocPath;
+    assert.equal(secondDoc, predictable.replace(/\.md$/u, "-3.md"));
+    assert.equal(await readFile(secondDoc as string, "utf8"), "# Ship it\n\nsecond\n");
+
+    // A hard link to an outside file is abandoned too; the outside file keeps its content.
+    await rm(secondDoc as string);
+    await writeFile(join(outside, "keep.md"), "keep");
+    await link(join(outside, "keep.md"), secondDoc as string);
+    await complete("# Ship it\n\nthird", context.ctx);
+    assert.equal(await readFile(join(outside, "keep.md"), "utf8"), "keep");
+    assert.equal(planStateEntry(mock)?.planDocPath, predictable.replace(/\.md$/u, "-4.md"));
+    assert.deepEqual(await readdir(outside), ["keep.md"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a restored plan document path outside the frozen output directory is dropped", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-doc-restore-")));
+  try {
+    const outside = join(directory, "outside");
+    await mkdir(outside);
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi);
+    const context = restoredPlanContext(
+      { enabled: true, awaitingAction: false, planDocPath: join(outside, "victim.md") },
+      { cwd: directory },
+    );
+    await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+    await vi.waitFor(() => assert.equal(planStateEntry(mock)?.sandbox?.outputDir, join(directory, "plans")));
+    assert.equal(planStateEntry(mock)?.planDocPath, undefined);
+
+    await completeTool(mock)("# Restored\n\nbody", context.ctx);
+    assert.equal(existsSync(join(outside, "victim.md")), false);
+    assert.equal(dirname(planStateEntry(mock)?.planDocPath ?? ""), join(directory, "plans"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a symlinked plan output directory makes Plan start fail closed without a setup guide", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-outdir-link-")));
+  try {
+    const repo = join(directory, "repo");
+    const outside = join(directory, "outside");
+    await mkdir(repo);
+    await mkdir(outside);
+    await symlink(outside, join(repo, "plans"));
+    let probes = 0;
+    const deps = { ...sandboxDeps(), diagnoseSandbox: async () => ((probes += 1), { ...passingSandboxDiagnosis }) };
+
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planModeDefault(mock.pi, deps);
+    const context = createMockContext({ cwd: repo, hasUI: true });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await mock.commands.get("plan")?.handler("design it", context.ctx);
+    assert.equal(context.statuses.get("plan-mode"), undefined);
+    assert.match(context.notifications.at(-1)?.message ?? "", /Plan mode cannot start: .*symlink/u);
+    assert.equal(context.notifications.at(-1)?.level, "error");
+    assert.equal(mock.sentUserMessages.length, 0);
+    assert.equal(probes, 0);
+
+    const headless = createMockPi({ activeTools: ["read", "bash"] });
+    planModeDefault(headless.pi, deps);
+    const headlessContext = createMockContext({ cwd: repo, hasUI: false });
+    await headless.events.get("session_start")?.[0]?.({ reason: "startup" }, headlessContext.ctx);
+    await assert.rejects(headless.commands.get("plan")?.handler("start", headlessContext.ctx), /symlink/u);
+    assert.deepEqual(await readdir(outside), []);
+
+    // A restored workflow whose frozen directory became a symlink leaves Plan mode with the reason.
+    const restored = createMockPi({ activeTools: ["read", "bash"] });
+    planModeDefault(restored.pi, deps);
+    const restoredContext = restoredPlanContext(
+      {
+        enabled: true,
+        awaitingAction: false,
+        sandbox: {
+          srtPath: "/usr/local/bin/srt",
+          settingsPath: join(TEST_SRT_PROFILE_DIR, `pi-plan-mode-srt-${randomUUID()}.json`),
+          outputDir: join(repo, "plans"),
+          allowWrite: [],
+          denyRead: [],
+          allowedDomains: [],
+        },
+      },
+      { cwd: repo },
+    );
+    await restored.events.get("session_start")?.[0]?.({ reason: "resume" }, restoredContext.ctx);
+    await vi.waitFor(() => assert.equal(restoredContext.statuses.get("plan-mode"), undefined));
+    assert.ok(restoredContext.notifications.some((entry) => /Leaving Plan mode: .*symlink/u.test(entry.message)));
+    assert.equal(restored.sentUserMessages.length, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("settings changes during a workflow do not move its plan output boundary", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-frozen-")));
+  try {
+    const settingsPath = join(directory, "settings", "pi-plan-mode.json");
+    await mkdir(dirname(settingsPath));
+    await writeFile(settingsPath, JSON.stringify({ planOutputDir: "first" }));
+    const repo = join(directory, "repo");
+    await mkdir(repo);
+    const mock = createMockPi({ activeTools: ["read", "bash", "write"] });
+    planMode(mock.pi, { settingsPath });
+    const context = createMockContext({ cwd: repo, hasUI: true });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await mock.commands.get("plan")?.handler("start", context.ctx);
+    assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+    const contract = mock.sentMessages.find(
+      (entry) => (entry.message as { customType?: string }).customType === "plan-mode-transition",
+    )?.message as { content: string };
+    assert.match(contract.content, new RegExp(`${join(repo, "first")}/`, "u"));
+
+    await writeFile(settingsPath, JSON.stringify({ planOutputDir: "second" }));
+    await vi.waitFor(async () => {
+      await mock.commands.get("plan")?.handler("doctor", context.ctx);
+      assert.match(context.notifications.at(-1)?.message ?? "", /Plan output directory: .*second/u);
+    });
+
+    const call = async (path: string) =>
+      (await mock.events.get("tool_call")?.[0]?.(
+        { toolName: "write", input: { path, content: "# x" }, toolCallId: `write-${path}` },
+        context.ctx,
+      )) as { block?: boolean } | undefined;
+    assert.equal(await call("first/draft.md"), undefined);
+    assert.equal((await call("second/draft.md"))?.block, true);
+
+    await completeTool(mock)("# Frozen\n\nbody", context.ctx);
+    assert.equal(dirname(planStateEntry(mock)?.planDocPath ?? ""), join(repo, "first"));
+    assert.equal(existsSync(join(repo, "second")), false);
+
+    // The compaction fallback re-inserts exactly the originally published contract.
+    const transformed = (await mock.events.get("context")?.[0]?.(
+      { messages: [{ role: "user", content: "continue" }] },
+      context.ctx,
+    )) as { messages: Array<{ content?: unknown }> };
+    assert.equal(transformed.messages[0]?.content, contract.content);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a restored workflow that loses its sandbox while busy leaves Plan mode after agent_settled", async () => {
+  let idle = false;
+  let probes = 0;
+  const mock = createMockPi({ activeTools: ["read", "bash"] });
+  planModeDefault(mock.pi, {
+    ...sandboxDeps(missingSrtDiagnosis),
+    diagnoseSandbox: async () => ((probes += 1), { ...missingSrtDiagnosis }),
+  });
+  const context = restoredPlanContext({ enabled: true, awaitingAction: false }, { isIdle: () => idle });
+  await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+  await vi.waitFor(() => assert.equal(probes, 1));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+  assert.equal(mock.sentUserMessages.length, 0);
+
+  idle = true;
+  await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
+  assert.equal(context.statuses.get("plan-mode"), undefined);
+  assert.match(mock.sentUserMessages.at(-1)?.text ?? "", /SRT SETUP GUIDE missing/u);
+  assert.ok(context.notifications.some((entry) => /Leaving Plan mode/u.test(entry.message)));
+});
+
+test("a headless restore whose sandbox re-probe fails never rejects unhandled", async () => {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    for (const idle of [true, false]) {
+      const mock = createMockPi({ activeTools: ["read", "bash"] });
+      // Guide delivery fails too, which makes the headless guide path throw inside the detached re-probe.
+      mock.rawPi.sendUserMessage = () => {
+        throw new Error("delivery unavailable");
+      };
+      let probes = 0;
+      planModeDefault(mock.pi, {
+        ...sandboxDeps(missingSrtDiagnosis),
+        diagnoseSandbox: async () => ((probes += 1), { ...missingSrtDiagnosis }),
+      });
+      const context = restoredPlanContext({ enabled: true, awaitingAction: false }, { hasUI: false, isIdle: () => idle });
+      await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+      await vi.waitFor(() => assert.equal(probes, 1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (idle) assert.equal(planStateEntry(mock)?.enabled, false);
+    }
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+  assert.deepEqual(unhandled, []);
+});
+
+test("a second Plan start while the first is probing is refused and stale probes leave nothing behind", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-start-race-")));
+  try {
+    const profileDir = join(directory, "srt");
+    let releaseProbe: () => void = () => undefined;
+    let probes = 0;
+    const deps: PlanModeTestDependencies = {
+      ...sandboxDeps(),
+      srtProfileDir: profileDir,
+      diagnoseSandbox: async () => {
+        probes += 1;
+        await new Promise<void>((resolve) => {
+          releaseProbe = resolve;
+        });
+        return { ...passingSandboxDiagnosis };
+      },
+    };
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planModeDefault(mock.pi, deps);
+    const context = createMockContext({ cwd: directory, hasUI: true });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    const first = mock.commands.get("plan")?.handler("start", context.ctx);
+    await vi.waitFor(() => assert.equal(probes, 1));
+    await mock.commands.get("plan")?.handler("start", context.ctx);
+    assert.match(context.notifications.at(-1)?.message ?? "", /already starting/u);
+    releaseProbe();
+    await first;
+    assert.equal(probes, 1);
+    assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+    assert.equal((await readdir(profileDir)).length, 1);
+
+    // A probe that finishes after the session was replaced removes its new sandbox files.
+    const stale = createMockPi({ activeTools: ["read", "bash"] });
+    const staleProfileDir = join(directory, "stale-srt");
+    planModeDefault(stale.pi, { ...deps, srtProfileDir: staleProfileDir });
+    const staleContext = createMockContext({ cwd: directory, hasUI: true });
+    await stale.events.get("session_start")?.[0]?.({ reason: "startup" }, staleContext.ctx);
+    const staleStart = stale.commands.get("plan")?.handler("start", staleContext.ctx);
+    await vi.waitFor(() => assert.equal(probes, 2));
+    await stale.events.get("session_start")?.[0]?.({ reason: "new" }, staleContext.ctx);
+    releaseProbe();
+    await staleStart;
+    assert.equal(staleContext.statuses.get("plan-mode"), undefined);
+    assert.deepEqual(await readdir(staleProfileDir), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("switching to a branch without the workflow removes the dropped sandbox files", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-tree-leak-")));
+  try {
+    const profileDir = join(directory, "srt");
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi, { srtProfileDir: profileDir });
+    let branch: unknown[] = [];
+    const context = createMockContext({
+      cwd: directory,
+      hasUI: true,
+      sessionManager: { getBranch: () => branch, getEntries: () => branch },
+    });
+    await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+    await mock.commands.get("plan")?.handler("start", context.ctx);
+    const sandbox = planStateEntry(mock)?.sandbox;
+    assert.ok(sandbox?.settingsPath && sandbox.scratchDir);
+    assert.equal(existsSync(sandbox.settingsPath), true);
+
+    branch = [{ type: "custom", customType: "plan-mode-state", data: { enabled: false, awaitingAction: false } }];
+    await mock.events.get("session_tree")?.[0]?.({}, context.ctx);
+    assert.equal(context.statuses.get("plan-mode"), undefined);
+    await vi.waitFor(() => {
+      assert.equal(existsSync(sandbox.settingsPath as string), false);
+      assert.equal(existsSync(sandbox.scratchDir as string), false);
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("restored sandbox paths are validated before deletion and tampered extras never widen the profile", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-tamper-")));
+  try {
+    const victim = join(directory, `pi-plan-mode-srt-${randomUUID()}.json`);
+    const victimDir = join(directory, "victim-dir");
+    await writeFile(victim, "keep");
+    await mkdir(victimDir);
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi, {
+      readSettings: async () => ({
+        kind: "loaded" as const,
+        settings: { thinkingLevel: "inherit" as const, planSandbox: { allowWrite: ["/srv/shared"] } },
+      }),
+    });
+    const context = restoredPlanContext(
+      {
+        enabled: true,
+        awaitingAction: false,
+        sandbox: {
+          srtPath: "/usr/local/bin/srt",
+          settingsPath: victim,
+          scratchDir: victimDir,
+          outputDir: join(directory, "plans"),
+          allowWrite: ["/"],
+          denyRead: [],
+          allowedDomains: ["evil.example"],
+        },
+      },
+      { cwd: directory },
+    );
+    await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+    await vi.waitFor(() => assert.equal(dirname(planStateEntry(mock)?.sandbox?.settingsPath ?? ""), TEST_SRT_PROFILE_DIR));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(await readFile(victim, "utf8"), "keep");
+    assert.equal(existsSync(victimDir), true);
+
+    const sandbox = planStateEntry(mock)?.sandbox;
+    assert.deepEqual(sandbox?.allowWrite, ["/srv/shared"]);
+    const profile = await readProfile(sandbox?.settingsPath);
+    assert.deepEqual(profile.filesystem.allowWrite, [join(directory, "plans"), sandbox?.scratchDir, "/srv/shared"]);
+    assert.deepEqual(profile.network.allowedDomains, []);
+    assert.ok(profile.filesystem.denyRead.includes("~/.ssh"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("restored extras no wider than the current settings stay frozen", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-narrow-")));
+  try {
+    const mock = createMockPi({ activeTools: ["read", "bash"] });
+    planMode(mock.pi, {
+      readSettings: async () => ({
+        kind: "loaded" as const,
+        settings: {
+          thinkingLevel: "inherit" as const,
+          planSandbox: { allowWrite: ["/srv/a", "/srv/b"], allowedDomains: ["api.github.com", "x.example"] },
+        },
+      }),
+    });
+    const context = restoredPlanContext(
+      {
+        enabled: true,
+        awaitingAction: false,
+        sandbox: {
+          srtPath: "/usr/local/bin/srt",
+          settingsPath: join(TEST_SRT_PROFILE_DIR, `pi-plan-mode-srt-${randomUUID()}.json`),
+          outputDir: join(directory, "plans"),
+          allowWrite: ["/srv/a"],
+          denyRead: ["~/.kube"],
+          allowedDomains: ["api.github.com"],
+        },
+      },
+      { cwd: directory },
+    );
+    await mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx);
+    await vi.waitFor(() => assert.ok(planStateEntry(mock)?.sandbox?.scratchDir));
+    const sandbox = planStateEntry(mock)?.sandbox;
+    const profile = await readProfile(sandbox?.settingsPath);
+    assert.deepEqual(profile.filesystem.allowWrite, [join(directory, "plans"), sandbox?.scratchDir, "/srv/a"]);
+    assert.deepEqual(profile.network.allowedDomains, ["api.github.com"]);
+    assert.ok(profile.filesystem.denyRead.includes("~/.kube"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy plan echoes and write/edit draft echoes show the plan document path", async () => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "pi-plan-mode-echo-")));
+  try {
+    const { mock, context, call } = await startPlanIn(directory, { activeTools: ["read", "bash", "write"] });
+    await mock.events.get("agent_end")?.[0]?.(
+      { messages: [{ role: "assistant", content: "<proposed_plan>\n# Legacy echo\n</proposed_plan>" }] },
+      context.ctx,
+    );
+    await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
+    const echo = (mock.sentMessages.at(-1)?.message as { content?: string })?.content ?? "";
+    assert.ok(echo.endsWith(`📄 plans/${planDocFilename(new Date(), "legacy-echo")}`), echo);
+
+    // write/edit echoes come from the admitted target, without depending on file mtimes.
+    assert.equal(await call("write", { path: "plans/echo.md", content: "# E" }, "write-ok"), undefined);
+    const result = (toolCallId: string, isError: boolean) =>
+      mock.events.get("tool_result")?.[0]?.(
+        {
+          type: "tool_result",
+          toolName: "write",
+          toolCallId,
+          input: { path: "plans/echo.md", content: "# E" },
+          content: [{ type: "text", text: isError ? "failed" : "ok" }],
+          isError,
+        },
+        context.ctx,
+      ) as Promise<{ content: Array<{ text?: string }> } | undefined>;
+    const ok = await result("write-ok", false);
+    assert.match(ok?.content.at(-1)?.text ?? "", /📄 Plan draft updated → plans\/echo\.md/u);
+    assert.equal(await call("write", { path: "plans/echo.md", content: "# E" }, "write-failed"), undefined);
+    assert.equal(await result("write-failed", true), undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

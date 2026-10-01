@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DefaultResourceLoader, ExtensionRunner, SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -58,7 +59,11 @@ test("generated runtime is loadable by Pi's Jiti resource loader", async () => {
   const agentDir = join(root, "agent");
   const output = join(root, "dist");
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const previousTmpdir = process.env.TMPDIR;
+  // The started workflow's private srt scratch dir lands under TMPDIR; keep it in a removable temp dir.
+  const workflowTmpdir = await mkdtemp(join(tmpdir(), "pi-plan-mode-build-tmp-"));
   try {
+    process.env.TMPDIR = workflowTmpdir;
     await builder.buildRuntime({ outputDirectory: output });
     await mkdir(agentDir, { recursive: true });
     process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -153,6 +158,9 @@ test("generated runtime is loadable by Pi's Jiti resource loader", async () => {
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    if (previousTmpdir === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previousTmpdir;
     await rm(root, { force: true, recursive: true });
+    await rm(workflowTmpdir, { force: true, recursive: true });
   }
 });

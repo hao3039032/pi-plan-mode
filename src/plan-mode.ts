@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { watch } from "node:fs";
-import { basename, dirname } from "node:path";
+import { existsSync, watch } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  InputEvent,
-  InputSource,
+import {
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+  getAgentDir,
+  type InputEvent,
+  type InputSource,
 } from "@earendil-works/pi-coding-agent";
 import { completePlanArguments } from "./command.js";
 import {
@@ -50,12 +51,25 @@ import {
   type PlanModeContract,
   reconcileModeContract,
 } from "./mode-contract.js";
-import { allocatePlanDocPath, displayPath, newestPlanMarkdown, resolvePlanOutputDir, writePlanDoc } from "./plan-docs.js";
+import {
+  allocatePlanDocPath,
+  displayPath,
+  isAtOrUnderPath,
+  isPathInsidePlanOutputDir,
+  isSafePlanDocTarget,
+  newestPlanMarkdown,
+  preparePlanOutputDir,
+  realpathThroughExistingAncestor,
+  resolvePlanOutputDir,
+  resolveToolTargetPath,
+  writePlanDoc,
+} from "./plan-docs.js";
 import { createPlanActionController, type FreshImplementationTiming } from "./plan-action-controller.js";
 import { createPlanExportController } from "./plan-export-controller.js";
 import {
   clearPlanModeUi,
   planModeStatusText as formatPlanModeStatusText,
+  showPlanModePlan,
   showStoredPlan,
   updatePlanModeUi,
 } from "./presentation.js";
@@ -69,12 +83,14 @@ import {
 } from "./question-tool.js";
 import { assertPlanModeHelperToolsAvailable, planModeHelperToolsAvailable } from "./required-tools.js";
 import {
+  buildPlanSandboxProfile,
   buildSrtSetupGuide,
+  createSrtScratchDir,
   DEFAULT_SRT_DENY_READ,
   describeSrtDiagnosis,
   diagnoseSrtRuntime,
   removeSrtProfile,
-  SRT_SCRATCH_WRITE_PATH,
+  removeSrtScratchDir,
   srtProfileSettingsPath,
   type SrtRuntimeDiagnosis,
   type SrtSandboxProfile,
@@ -92,6 +108,7 @@ import {
   type ImplementationPlanRetention,
   type PlanModeSettings,
   type PlanModeSettingsPatch,
+  legacyPlanModeSettingsPath,
   planModeSettingsPath,
   readPlanModeSettings,
   type UpdatePlanModeSettingsOptions,
@@ -102,23 +119,50 @@ import {
   type PlanCompletionSource,
   type PlanModeSandboxState,
   type PlanModeState,
+  type PlanSandboxSnapshot,
   type PlanModeWorkflowToolPolicy,
   restorePlanModeState,
 } from "./state.js";
 import {
   canSelectToolInPlanMode,
   classifyPlanModeTool,
+  isBuiltinTool,
+  isPlanOutputWriteToolName,
   powershellBlockReason,
   readCommand,
+  readToolPath,
 } from "./tool-policy.js";
 import { compareTools, snapshotPlanModeSelectedNames, toolPolicyLabel } from "./tool-selection.js";
 import { WorkflowMutex, type WorkflowMutexOwner } from "./workflow-mutex.js";
 
 const STATE_ENTRY_TYPE = "plan-mode-state";
-const PROPOSED_PLAN_MESSAGE_TYPE = "proposed-plan";
 const RECOVERED_RUNTIME_ADMISSION_INPUT_MESSAGE_TYPE = "plan-mode-recovered-input";
 const BLOCKED_MUTATING_TOOLS = new Set(["edit", "write", "update_plan"]);
+/** Subdirectory of the pi agent dir holding srt profiles; never sandbox-writable. */
+const SRT_PROFILE_DIR_NAME = "srt";
 const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+type ActivePlanSandbox = PlanModeSandboxState & PlanSandboxSnapshot & { scratchDir: string };
+/** Outcome of creating a workflow sandbox: a verified sandbox or the reason Plan mode cannot use one. */
+interface PlanSandboxCreation {
+  sandbox?: ActivePlanSandbox;
+  diagnosis?: SrtRuntimeDiagnosis;
+  error?: unknown;
+  /** Set when the plan output directory failed verification (srt itself was not probed). */
+  outputDirProblem?: string;
+}
+/** A restored workflow whose sandbox re-probe failed while an agent run was active. */
+interface PendingSandboxLoss {
+  sessionManager: ExtensionContext["sessionManager"];
+  menuGeneration: number;
+  workflowGeneration: number;
+  notice: string;
+  diagnosis?: SrtRuntimeDiagnosis;
+}
+interface TrackedPlanCall {
+  startedAt: number;
+  /** Resolved write/edit target; bash calls scan the output directory instead. */
+  target?: string;
+}
 interface ReadyPresentationIntent {
   nonce: number;
   plan: string;
@@ -168,6 +212,8 @@ interface PlanModeDependencies {
   /** Test seam for the srt runtime probe; defaults to the real spawn-based diagnosis. */
   diagnoseSandbox?: typeof diagnoseSrtRuntime;
   buildSetupGuide?: typeof buildSrtSetupGuide;
+  /** Directory holding srt profiles; defaults to `<agentDir>/srt`. Tests inject a temp dir. */
+  srtProfileDir?: string;
 }
 
 // Keep session state, persistence, tool, thinking, and mutex commits in this one closure so an
@@ -214,9 +260,13 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   // SRT sandbox for the active Plan workflow: set during start (after the runtime probe passes)
   // and mirrored into persisted state. Undefined while idle or while a restored workflow waits
   // for its async re-probe, in which case bash calls fail closed.
-  let activeSandbox: PlanModeSandboxState | undefined;
+  let activeSandbox: ActivePlanSandbox | undefined;
+  let planStartInFlight = false;
+  let pendingSandboxLoss: PendingSandboxLoss | undefined;
   let workflowStartedAt = 0;
-  const trackedBashCalls = new Map<string, { command: string; startedAt: number }>();
+  // Plan-mode bash calls and plan-output write/edit calls keyed by tool call id, used to report
+  // Markdown drafts the call created or modified in the plan output directory.
+  const trackedPlanCalls = new Map<string, TrackedPlanCall>();
   const implementationRetention = createImplementationRetentionCoordinator();
   const finalizationRequest = createFinalizationRequestCoordinator();
   const persistState = () => pi.appendEntry<PlanModeState>(STATE_ENTRY_TYPE, state);
@@ -315,7 +365,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       if (!parsed.ok) throw new Error(parsed.error);
 
       await acceptCompletedPlan(parsed.plan, PLAN_MODE_COMPLETE_TOOL_NAME, ctx);
-      return planModeCompleted(parsed.plan);
+      return planModeCompleted(parsed.plan, state.enabled ? displayPath(state.planDocPath, ctx.cwd) : undefined);
     },
   });
 
@@ -516,6 +566,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     menuController.abort(new DOMException("Plan-mode session replaced", "AbortError"));
     menuController = new AbortController();
     readyPresentationIntent = undefined;
+    pendingSandboxLoss = undefined;
     latestCommandContext = undefined;
     workflowAllowedToolNames = undefined;
     pendingWorkflowToolPolicy = undefined;
@@ -533,7 +584,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     implementationRetention.restore(state.activeImplementation);
     updateUi(ctx);
     if (restoredState.enabled) {
-      void revalidateRestoredSandbox(ctx);
+      scheduleRestoredSandboxRevalidation(ctx);
     }
     // A new session receives its setup entries after session_start, so its input gate refreshes
     // them. Resumed and forked sessions already have the intent and must apply it here because
@@ -571,6 +622,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     menuController.abort(new DOMException("Plan-mode tree branch changed", "AbortError"));
     menuController = new AbortController();
     readyPresentationIntent = undefined;
+    pendingSandboxLoss = undefined;
     latestCommandContext = undefined;
     pendingRuntimeAdmissionSession = undefined;
     queuedRuntimeAdmissionInputs = [];
@@ -583,7 +635,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     startPlanModeSettingsWatch(menuGeneration);
     updateUi(ctx);
     if (restoredState.enabled) {
-      void revalidateRestoredSandbox(ctx);
+      scheduleRestoredSandboxRevalidation(ctx);
     }
     await applyPendingImplementationRuntime(ctx);
   });
@@ -625,6 +677,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     menuGeneration += 1;
     menuController.abort(new DOMException("Plan-mode session shut down", "AbortError"));
     readyPresentationIntent = undefined;
+    pendingSandboxLoss = undefined;
     latestCommandContext = undefined;
     refreshStateBeforeFirstAgentStart = false;
     pendingRuntimeAdmissionSession = undefined;
@@ -632,7 +685,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     workflowAllowedToolNames = undefined;
     pendingWorkflowToolPolicy = undefined;
     implementationRetention.reset();
-    trackedBashCalls.clear();
+    trackedPlanCalls.clear();
     void discardActiveSandbox();
     if (runtimeApplication) await runtimeApplication.completion;
     if (currentSession !== undefined && currentSession !== shutdownSession) {
@@ -672,6 +725,13 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         block: true,
         reason: `Plan mode blocks tool '${event.toolName}' because workflow ownership is unavailable.`,
       };
+    }
+    if (isPlanOutputWriteToolName(event.toolName)) {
+      const target = await planOutputWriteTarget(event.toolName, event.input, ctx);
+      if (target !== undefined) {
+        trackPlanCall(event.toolCallId, target);
+        return;
+      }
     }
     if (BLOCKED_MUTATING_TOOLS.has(event.toolName)) {
       return {
@@ -733,14 +793,14 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         };
       }
       const command = readCommand(event.input);
-      const wrapped = wrapCommandForSrt(command, sandbox.srtPath, sandbox.settingsPath);
+      const wrapped = wrapCommandForSrt(command, sandbox.srtPath, sandbox.settingsPath, sandbox.scratchDir);
       if (wrapped === undefined) {
         return {
           block: true,
           reason: "Plan mode could not wrap this bash command for the srt sandbox (it contains characters no shell can carry).",
         };
       }
-      trackBashCall(event.toolCallId, command);
+      trackPlanCall(event.toolCallId);
       (event.input as Record<string, unknown>).command = wrapped;
     }
   });
@@ -757,16 +817,20 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
   pi.on("tool_result", async (event, ctx) => {
     if (!state.enabled) return;
-    if (event.toolName !== "bash") return;
-    const tracked = takeTrackedBashCall(event.toolCallId);
+    const tracked = takeTrackedPlanCall(event.toolCallId);
     const annotations: string[] = [];
-    if (bashContentLooksLikeSandboxDenial(event.content)) {
+    if (event.toolName === "bash" && bashContentLooksLikeSandboxDenial(event.content)) {
       annotations.push(
         "ℹ️ Plan-mode sandbox: this failure is the sandbox boundary (read-only filesystem or restricted network). Do not retry the same operation with different syntax.",
       );
     }
     if (tracked) {
-      const draft = await detectPlanDraftUpdate(tracked, ctx.cwd);
+      const draft =
+        tracked.target !== undefined
+          ? event.isError
+            ? undefined
+            : planDraftDisplay(tracked.target, ctx.cwd)
+          : await detectPlanDraftUpdate(tracked.startedAt, ctx.cwd);
       if (draft) annotations.push(`📄 Plan draft updated → ${draft} (/plan show to view)`);
     }
     if (annotations.length === 0) return;
@@ -781,7 +845,11 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     }
     const messages =
       state.enabled || modeContractsRelevant
-        ? reconcileModeContract(result.messages, state.enabled ? "plan" : "normal")
+        ? reconcileModeContract(
+            result.messages,
+            state.enabled ? "plan" : "normal",
+            state.enabled ? workflowPromptSandboxInfo() : undefined,
+          )
         : result.messages;
     return { messages: messages as typeof event.messages };
   });
@@ -860,6 +928,23 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     const settledImplementationId = implementationRetention.implementationSettled(state.activeImplementation);
     if (settledImplementationId) clearActiveImplementation(settledImplementationId, ctx);
 
+    const loss = pendingSandboxLoss;
+    if (loss) {
+      if (!sandboxLossIsCurrent(loss)) {
+        pendingSandboxLoss = undefined;
+      } else {
+        // The workflow is ending: skip finalization retries and ready presentation for it.
+        if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
+        pendingSandboxLoss = undefined;
+        try {
+          completeSandboxLoss(ctx, loss);
+        } catch (error: unknown) {
+          reportDetachedSandboxFailure(ctx, error);
+        }
+        return;
+      }
+    }
+
     if (finalizationRequest.hasPendingRequest() && state.enabled && workflowMutex.isOwner(workflowOwner)) {
       if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
       const action = finalizationRequest.settle(workflowGeneration);
@@ -883,14 +968,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     stagedFreshImplementation = undefined;
     try {
       if (intent.source === "legacy_proposed_plan") {
-        pi.sendMessage(
-          {
-            customType: PROPOSED_PLAN_MESSAGE_TYPE,
-            content: `**Proposed Plan**\n\n${intent.plan}`,
-            display: true,
-          },
-          { triggerTurn: false },
-        );
+        showPlanModePlan(pi, ctx, "Proposed Plan", intent.plan, state.planDocPath, ctx.cwd);
       }
       if (ctx.hasUI && completedPlanIsCurrent(intent)) {
         await planActions.showReady(latestCommandContext ?? ctx);
@@ -952,6 +1030,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       applyPlanThinkingLevel();
       persistState();
       updateUi(ctx);
+      // The workflow started from this session's live state; a first prompt after /new must not
+      // re-install the branch state and re-probe a sandbox that was just verified.
+      refreshStateBeforeFirstAgentStart = false;
       return true;
     } catch (error: unknown) {
       rollbackNewActivation(previousState, ctx);
@@ -976,23 +1057,58 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       }
       return;
     }
+    if (planStartInFlight) {
+      ctx.ui.notify("Plan mode is already starting; wait for the sandbox check to finish.", "info");
+      return;
+    }
     // Reject a busy run before spending time on the sandbox probe so atomic-start guarantees
     // (workflow mutex, busy notifications) stay synchronous for callers.
     if (!allowModeTransition(ctx, "start Plan mode")) return;
-    const gate = await prepareSandboxForStart(ctx);
-    if (!gate) {
+    planStartInFlight = true;
+    try {
+      await startPlanWorkflowWithSandbox(ctx, options);
+    } finally {
+      planStartInFlight = false;
+    }
+  }
+
+  async function startPlanWorkflowWithSandbox(
+    ctx: ExtensionContext,
+    options: { prompt?: string; candidate?: Pick<PlanModeState, "selectedToolNames" | "selectedToolKeys"> },
+  ) {
+    const startSession = currentSession;
+    const startMenuGeneration = menuGeneration;
+    const startWorkflowGeneration = workflowGeneration;
+    const isCurrent = () =>
+      currentSession === startSession &&
+      menuGeneration === startMenuGeneration &&
+      workflowGeneration === startWorkflowGeneration &&
+      !state.enabled;
+    await discardActiveSandbox();
+    const result = await createVerifiedSandbox(ctx);
+    if (!isCurrent()) {
+      await removeSandboxFiles(result.sandbox);
+      return;
+    }
+    const sandbox = result.sandbox;
+    if (!sandbox) {
+      reportSandboxStartFailure(result, ctx);
       if (options.prompt) {
         state = { ...state, pendingPlanPrompt: options.prompt };
         persistState();
       }
       return;
     }
+    activeSandbox = sandbox;
     const previousState = state;
     const previousOwner = workflowOwner;
-    if (!enterPlanMode(ctx, options.candidate ?? state)) {
-      await discardActiveSandbox();
-      return;
+    let entered = false;
+    try {
+      entered = enterPlanMode(ctx, options.candidate ?? state);
+    } finally {
+      if (!entered) await discardSandbox(sandbox);
     }
+    if (!entered) return;
     ctx.ui.notify("Plan mode enabled. Shell runs in the srt sandbox; I will explore and plan, not modify files.", "info");
     const prompt = options.prompt ?? state.pendingPlanPrompt;
     if (!prompt) return;
@@ -1000,13 +1116,18 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     persistState();
     if (sendPlanModeUserMessage(prompt, ctx)) return;
     rollbackNewActivation(previousState, ctx, previousOwner);
-    await discardActiveSandbox();
+    await discardSandbox(sandbox);
     state = { ...state, pendingPlanPrompt: prompt };
     persistState();
   }
 
   function exitPlanMode(ctx: ExtensionContext) {
     if (!allowModeTransition(ctx, "leave or clear Plan mode")) return false;
+    return leavePlanMode(ctx);
+  }
+
+  /** Leave or clear Plan mode; callers have already checked that a mode transition is allowed. */
+  function leavePlanMode(ctx: ExtensionContext) {
     const wasEnabled = state.enabled;
     if ((wasEnabled || modeContractsRelevant) && !publishModeContract("normal", ctx)) {
       return false;
@@ -1055,7 +1176,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     const { role: _role, timestamp: _timestamp, ...message } = createModeContractMessage(
       mode,
       Date.now(),
-      mode === "plan" ? currentPromptSandboxInfo(ctx.cwd) : undefined,
+      mode === "plan" ? workflowPromptSandboxInfo() : undefined,
     );
     try {
       pi.sendMessage(message, { triggerTurn: false });
@@ -1083,61 +1204,182 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     }
   }
 
-  /** Effective sandbox profile for this session: defaults extended by the user's planSandbox settings. */
-  function effectiveSandboxProfile(cwd: string | undefined): { profile: SrtSandboxProfile; outputDir: string } {
-    const sandboxSettings = configuredPlanSandbox(settings);
-    const outputDir = resolvePlanOutputDir(configuredPlanOutputDir(settings), cwd ?? process.cwd());
-    return {
-      outputDir,
-      profile: {
-        allowWrite: dedupeStrings([SRT_SCRATCH_WRITE_PATH, outputDir, ...(sandboxSettings.allowWrite ?? [])]),
-        denyRead: dedupeStrings([...DEFAULT_SRT_DENY_READ, ...(sandboxSettings.denyRead ?? [])]),
-        allowedDomains: dedupeStrings(sandboxSettings.allowedDomains ?? []),
-      },
-    };
+  function srtProfileDir() {
+    return dependencies.srtProfileDir ?? join(getAgentDir(), SRT_PROFILE_DIR_NAME);
   }
 
-  function currentPromptSandboxInfo(cwd: string | undefined): PlanModePromptSandboxInfo {
-    const { profile, outputDir } = effectiveSandboxProfile(cwd);
+  function planModeSettingsFiles() {
+    return explicitPlanModeSettingsPath
+      ? [explicitPlanModeSettingsPath]
+      : [planModeSettingsPath(), legacyPlanModeSettingsPath()];
+  }
+
+  /**
+   * Paths no Plan workflow may write: the whole pi agent dir (sessions, settings, srt profiles),
+   * the srt profile dir (which a test seam may move), and the pi-plan-mode settings files.
+   */
+  function protectedPlanModePaths() {
+    return { dirs: [getAgentDir(), srtProfileDir()], files: planModeSettingsFiles() };
+  }
+
+  /**
+   * srt profile for a workflow snapshot: writes only in the frozen plan output directory, the
+   * workflow's private scratch directory, and the frozen planSandbox extras; protected paths are
+   * always write-denied (srt gives denyWrite precedence over allowWrite).
+   */
+  function sandboxProfileFor(snapshot: PlanSandboxSnapshot, scratchDir?: string): SrtSandboxProfile {
+    const { dirs, files } = protectedPlanModePaths();
+    return buildPlanSandboxProfile({
+      outputDir: snapshot.outputDir,
+      ...(scratchDir ? { scratchDir } : {}),
+      profileDir: srtProfileDir(),
+      protectedPaths: [...dirs, ...files],
+      allowWrite: snapshot.allowWrite,
+      denyRead: snapshot.denyRead,
+      allowedDomains: snapshot.allowedDomains,
+    });
+  }
+
+  function promptSandboxInfoFor(snapshot: PlanSandboxSnapshot): PlanModePromptSandboxInfo {
+    const profile = sandboxProfileFor(snapshot);
     return {
       writePaths: profile.allowWrite,
-      planOutputDir: outputDir,
+      planOutputDir: snapshot.outputDir,
       allowedDomains: profile.allowedDomains,
     };
   }
 
-  function dedupeStrings(values: readonly string[]) {
-    return Array.from(new Set(values));
-  }
-
-  /** Probe srt, persist the profile, and return the sandbox for a new Plan workflow. */
-  async function prepareSandboxForStart(ctx: ExtensionContext): Promise<PlanModeSandboxState | undefined> {
-    await discardActiveSandbox();
-    const { profile } = effectiveSandboxProfile(ctx.cwd);
-    const settingsPath = srtProfileSettingsPath(randomUUID());
-    try {
-      await writeSrtProfile(settingsPath, profile);
-    } catch (error: unknown) {
-      const detail = terminalErrorDetail(error);
-      if (!ctx.hasUI) throw new Error(`Plan mode could not persist its srt sandbox profile: ${detail}`);
-      ctx.ui.notify(`Plan mode could not persist its srt sandbox profile: ${detail}`, "error");
+  /** The active workflow's frozen sandbox boundary, also while a restored workflow awaits its re-probe. */
+  function workflowSandboxSnapshot(): PlanSandboxSnapshot | undefined {
+    if (activeSandbox) return activeSandbox;
+    const persisted = state.enabled ? state.sandbox : undefined;
+    if (!persisted?.outputDir || !persisted.allowWrite || !persisted.denyRead || !persisted.allowedDomains) {
       return undefined;
     }
-    const diagnosis = await runSandboxDiagnosis(settingsPath);
-    if (diagnosis.ok && diagnosis.srtCommand) {
-      activeSandbox = { srtPath: diagnosis.srtCommand, settingsPath };
-      return activeSandbox;
+    return {
+      outputDir: persisted.outputDir,
+      allowWrite: persisted.allowWrite,
+      denyRead: persisted.denyRead,
+      allowedDomains: persisted.allowedDomains,
+    };
+  }
+
+  function workflowPromptSandboxInfo() {
+    const snapshot = workflowSandboxSnapshot();
+    return snapshot ? promptSandboxInfoFor(snapshot) : undefined;
+  }
+
+  /** Verified real plan output directory of the active workflow; undefined until its sandbox is verified. */
+  function workflowOutputDir() {
+    return state.enabled ? activeSandbox?.outputDir : undefined;
+  }
+
+  function currentSandboxExtras(): Omit<PlanSandboxSnapshot, "outputDir"> {
+    const configured = configuredPlanSandbox(settings);
+    return {
+      allowWrite: [...(configured.allowWrite ?? [])],
+      denyRead: [...(configured.denyRead ?? [])],
+      allowedDomains: [...(configured.allowedDomains ?? [])],
+    };
+  }
+
+  /**
+   * Restored session data never widens the sandbox: frozen allowWrite/allowedDomains must be subsets
+   * of the current settings and the frozen denyRead must cover the current one (defaults included);
+   * otherwise the current settings apply.
+   */
+  function restorableSandboxExtras(restored: PlanModeSandboxState | undefined) {
+    const current = currentSandboxExtras();
+    if (!restored?.allowWrite || !restored.denyRead || !restored.allowedDomains) return current;
+    const currentAllowWrite = new Set(current.allowWrite);
+    const currentDomains = new Set(current.allowedDomains);
+    const restoredDenyRead = new Set([...DEFAULT_SRT_DENY_READ, ...restored.denyRead]);
+    const noWider =
+      restored.allowWrite.every((path) => currentAllowWrite.has(path)) &&
+      restored.allowedDomains.every((domain) => currentDomains.has(domain)) &&
+      [...DEFAULT_SRT_DENY_READ, ...current.denyRead].every((path) => restoredDenyRead.has(path));
+    return noWider
+      ? {
+          allowWrite: [...restored.allowWrite],
+          denyRead: [...restored.denyRead],
+          allowedDomains: [...restored.allowedDomains],
+        }
+      : current;
+  }
+
+  /** Create the scratch dir and profile, probe srt, and return the sandbox; nothing is left behind on failure. */
+  async function createVerifiedSandbox(
+    ctx: ExtensionContext,
+    restored?: PlanModeSandboxState,
+  ): Promise<PlanSandboxCreation> {
+    const { dirs, files } = protectedPlanModePaths();
+    const resolution = await preparePlanOutputDir({
+      cwd: ctx.cwd ?? process.cwd(),
+      configured: configuredPlanOutputDir(settings),
+      ...(restored?.outputDir ? { frozen: restored.outputDir } : {}),
+      protectedDirs: dirs,
+      protectedFiles: files,
+    });
+    if (!resolution.ok) return { outputDirProblem: resolution.reason };
+    const snapshot: PlanSandboxSnapshot = {
+      outputDir: resolution.outputDir,
+      ...(restored ? restorableSandboxExtras(restored) : currentSandboxExtras()),
+    };
+    let scratchDir: string | undefined;
+    const settingsPath = srtProfileSettingsPath(srtProfileDir(), randomUUID());
+    let diagnosis: SrtRuntimeDiagnosis;
+    try {
+      scratchDir = await createSrtScratchDir();
+      await writeSrtProfile(settingsPath, sandboxProfileFor(snapshot, scratchDir));
+      diagnosis = await runSandboxDiagnosis(settingsPath);
+    } catch (error: unknown) {
+      await removeSandboxFiles({ settingsPath, scratchDir });
+      return { error };
     }
-    await removeSrtProfile(settingsPath);
-    injectSrtSetupGuide(diagnosis, ctx);
-    return undefined;
+    if (diagnosis.ok && diagnosis.srtCommand && scratchDir) {
+      return { sandbox: { ...snapshot, srtPath: diagnosis.srtCommand, settingsPath, scratchDir }, diagnosis };
+    }
+    await removeSandboxFiles({ settingsPath, scratchDir });
+    return { diagnosis };
+  }
+
+  /** Remove a sandbox's profile and scratch dir; paths this extension did not create are ignored. */
+  async function removeSandboxFiles(sandbox: Partial<PlanModeSandboxState> | undefined) {
+    await removeSrtProfile(sandbox?.settingsPath, srtProfileDir());
+    await removeSrtScratchDir(sandbox?.scratchDir);
+  }
+
+  /** Report why a new workflow has no sandbox: output-dir and profile failures fail closed; srt problems get the setup guide. */
+  function reportSandboxStartFailure(result: PlanSandboxCreation, ctx: ExtensionContext) {
+    if (result.outputDirProblem !== undefined) {
+      const message = `Plan mode cannot start: ${safeTerminalText(result.outputDirProblem)}. Plan documents must stay in a real directory inside the working directory (or an absolute planOutputDir); fix the path, then run /plan start again.`;
+      if (!ctx.hasUI) throw new Error(message);
+      ctx.ui.notify(message, "error");
+      return;
+    }
+    if (result.error !== undefined) {
+      const message = `Plan mode could not persist its srt sandbox profile: ${terminalErrorDetail(result.error)}`;
+      if (!ctx.hasUI) throw new Error(message);
+      ctx.ui.notify(message, "error");
+      return;
+    }
+    if (result.diagnosis) injectSrtSetupGuide(result.diagnosis, ctx);
   }
 
   async function discardActiveSandbox() {
     const previous = activeSandbox;
     activeSandbox = undefined;
-    trackedBashCalls.clear();
-    await removeSrtProfile(previous?.settingsPath);
+    trackedPlanCalls.clear();
+    await removeSandboxFiles(previous);
+  }
+
+  /** Discard one specific sandbox, clearing it from the workflow only if it is still the active one. */
+  async function discardSandbox(sandbox: ActivePlanSandbox) {
+    if (activeSandbox === sandbox) {
+      activeSandbox = undefined;
+      trackedPlanCalls.clear();
+    }
+    await removeSandboxFiles(sandbox);
   }
 
   function runSandboxDiagnosis(settingsPath: string) {
@@ -1171,46 +1413,104 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     ctx.ui.notify(message, "warning");
   }
 
-  /** Re-probe a restored workflow's sandbox; leave Plan mode with the setup guide when it fails. */
+  /** Re-probe a restored workflow's sandbox off the event path; failures never become unhandled rejections. */
+  function scheduleRestoredSandboxRevalidation(ctx: ExtensionContext) {
+    void revalidateRestoredSandbox(ctx).catch((error: unknown) => reportDetachedSandboxFailure(ctx, error));
+  }
+
+  function reportDetachedSandboxFailure(ctx: ExtensionContext, error: unknown) {
+    if (isStaleExtensionContextError(error)) return;
+    try {
+      if (ctx.hasUI) ctx.ui.notify(`Plan-mode sandbox check failed: ${terminalErrorDetail(error)}`, "error");
+    } catch {
+      // The context can become stale while a detached re-probe settles.
+    }
+  }
+
+  /** Re-probe a restored workflow's sandbox; leave Plan mode (with the setup guide for srt problems) when it fails. */
   async function revalidateRestoredSandbox(ctx: ExtensionContext) {
     if (!state.enabled) return;
+    const session = ctx.sessionManager;
     const sessionGeneration = menuGeneration;
     const planWorkflowGeneration = workflowGeneration;
+    const restored = state.sandbox;
     const isCurrent = () =>
-      sessionGeneration === menuGeneration && planWorkflowGeneration === workflowGeneration && state.enabled;
-    const { profile } = effectiveSandboxProfile(ctx.cwd);
-    const settingsPath = srtProfileSettingsPath(randomUUID());
-    await writeSrtProfile(settingsPath, profile).catch(() => undefined);
-    const diagnosis = await runSandboxDiagnosis(settingsPath);
+      currentSession === session &&
+      sessionGeneration === menuGeneration &&
+      planWorkflowGeneration === workflowGeneration &&
+      state.enabled;
+    const result = await createVerifiedSandbox(ctx, restored);
     if (!isCurrent()) {
-      await removeSrtProfile(settingsPath);
+      await removeSandboxFiles(result.sandbox);
       return;
     }
-    if (diagnosis.ok && diagnosis.srtCommand) {
-      await removeSrtProfile(state.sandbox?.settingsPath);
-      activeSandbox = { srtPath: diagnosis.srtCommand, settingsPath };
-      state = { ...state, sandbox: activeSandbox };
+    const sandbox = result.sandbox;
+    if (sandbox) {
+      // Install synchronously so no await separates the currency check from the commit.
+      activeSandbox = sandbox;
+      const planDocPath =
+        state.planDocPath && dirname(state.planDocPath) === sandbox.outputDir ? state.planDocPath : undefined;
+      state = { ...state, sandbox: { ...sandbox }, planDocPath };
       persistState();
+      // The restored profile and scratch dir are no longer referenced by the workflow.
+      if (restored && restored.settingsPath !== sandbox.settingsPath) await removeSandboxFiles(restored);
       return;
     }
-    await removeSrtProfile(settingsPath);
     activeSandbox = undefined;
-    if (ctx.hasUI) {
-      ctx.ui.notify("Leaving Plan mode: the srt sandbox is unavailable in this environment.", "warning");
+    // The restored profile and scratch dir belong to a workflow that is being left.
+    await removeSandboxFiles(restored);
+    if (!isCurrent()) return;
+    const notice =
+      result.outputDirProblem !== undefined
+        ? `Leaving Plan mode: ${safeTerminalText(result.outputDirProblem)}.`
+        : result.diagnosis
+          ? "Leaving Plan mode: the srt sandbox is unavailable in this environment."
+          : `Leaving Plan mode: could not persist the srt sandbox profile: ${terminalErrorDetail(result.error)}`;
+    const loss: PendingSandboxLoss = {
+      sessionManager: session,
+      menuGeneration,
+      workflowGeneration,
+      notice,
+      ...(result.diagnosis ? { diagnosis: result.diagnosis } : {}),
+    };
+    if (!ctx.isIdle()) {
+      // Mode transitions are refused during a run; finish leaving once the run settles.
+      pendingSandboxLoss = loss;
+      return;
     }
-    if (exitPlanMode(ctx)) injectSrtSetupGuide(diagnosis, ctx);
+    completeSandboxLoss(ctx, loss);
+  }
+
+  function sandboxLossIsCurrent(loss: PendingSandboxLoss) {
+    return (
+      state.enabled &&
+      currentSession === loss.sessionManager &&
+      menuGeneration === loss.menuGeneration &&
+      workflowGeneration === loss.workflowGeneration
+    );
+  }
+
+  /** Leave a restored workflow whose sandbox is lost; only called while the session is idle. */
+  function completeSandboxLoss(ctx: ExtensionContext, loss: PendingSandboxLoss) {
+    if (ctx.hasUI) ctx.ui.notify(loss.notice, "warning");
+    if (leavePlanMode(ctx) && loss.diagnosis) injectSrtSetupGuide(loss.diagnosis, ctx);
   }
 
   async function runPlanDoctor(ctx: ExtensionContext) {
-    const { profile, outputDir } = effectiveSandboxProfile(ctx.cwd);
-    const settingsPath = srtProfileSettingsPath(`doctor-${randomUUID()}`);
-    await writeSrtProfile(settingsPath, profile).catch(() => undefined);
-    const diagnosis = await runSandboxDiagnosis(settingsPath);
-    await removeSrtProfile(settingsPath);
+    const outputDir = resolvePlanOutputDir(configuredPlanOutputDir(settings), ctx.cwd ?? process.cwd());
+    const profile = sandboxProfileFor({ outputDir, ...currentSandboxExtras() });
+    const settingsPath = srtProfileSettingsPath(srtProfileDir(), `doctor-${randomUUID()}`);
+    let diagnosis: SrtRuntimeDiagnosis;
+    try {
+      await writeSrtProfile(settingsPath, profile).catch(() => undefined);
+      diagnosis = await runSandboxDiagnosis(settingsPath);
+    } finally {
+      await removeSrtProfile(settingsPath, srtProfileDir());
+    }
     const lines = [
       describeSrtDiagnosis(diagnosis),
-      `Plan output directory: ${outputDir}`,
-      `Sandbox write paths: ${profile.allowWrite.join(", ")}`,
+      `Plan output directory: ${outputDir}${existsSync(outputDir) ? "" : " (missing; Plan start creates it)"}`,
+      `Sandbox write paths: ${profile.allowWrite.join(", ")} + a private per-workflow scratch TMPDIR`,
       `Sandbox network domains: ${profile.allowedDomains.length > 0 ? profile.allowedDomains.join(", ") : "none (all denied)"}`,
     ];
     if (!diagnosis.ok) lines.push("Run /plan start to receive the agent setup guide after fixing the environment.");
@@ -1218,21 +1518,21 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   }
 
   async function showStoredPlanForCurrentState(ctx: ExtensionContext) {
-    const { outputDir } = effectiveSandboxProfile(ctx.cwd);
+    const outputDir = workflowOutputDir();
     await showStoredPlan(pi, ctx, state, {
-      planOutputDir: outputDir,
+      ...(outputDir ? { planOutputDir: outputDir } : {}),
       draftSinceMs: workflowStartedAt || undefined,
     });
   }
 
-  function trackBashCall(toolCallId: string, command: string) {
-    if (trackedBashCalls.size > 200) trackedBashCalls.clear();
-    trackedBashCalls.set(toolCallId, { command, startedAt: Date.now() });
+  function trackPlanCall(toolCallId: string, target?: string) {
+    if (trackedPlanCalls.size > 200) trackedPlanCalls.clear();
+    trackedPlanCalls.set(toolCallId, { startedAt: Date.now(), ...(target !== undefined ? { target } : {}) });
   }
 
-  function takeTrackedBashCall(toolCallId: string) {
-    const tracked = trackedBashCalls.get(toolCallId);
-    trackedBashCalls.delete(toolCallId);
+  function takeTrackedPlanCall(toolCallId: string) {
+    const tracked = trackedPlanCalls.get(toolCallId);
+    trackedPlanCalls.delete(toolCallId);
     return tracked;
   }
 
@@ -1251,19 +1551,53 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     );
   }
 
-  async function detectPlanDraftUpdate(
-    tracked: { command: string; startedAt: number },
-    cwd: string | undefined,
-  ): Promise<string | undefined> {
-    const { outputDir } = effectiveSandboxProfile(cwd);
-    const rel = displayPath(outputDir, cwd) ?? outputDir;
-    if (!commandMentionsPath(tracked.command, outputDir, rel)) return undefined;
-    const updated = await newestPlanMarkdown(outputDir, tracked.startedAt);
+  /** Newest top-level Markdown file in the workflow's output directory modified since the bash call started. */
+  async function detectPlanDraftUpdate(startedAt: number, cwd: string | undefined): Promise<string | undefined> {
+    const outputDir = workflowOutputDir();
+    if (!outputDir) return undefined;
+    const updated = await newestPlanMarkdown(outputDir, startedAt);
     return updated ? (displayPath(updated, cwd) ?? updated) : undefined;
   }
 
-  function commandMentionsPath(command: string, absolutePath: string, relativePath: string) {
-    return command.includes(relativePath) || command.includes(absolutePath) || command.includes(basename(absolutePath));
+  /** Display path of a Markdown write/edit target admitted into the plan output directory. */
+  function planDraftDisplay(target: string, cwd: string | undefined) {
+    if (!target.toLowerCase().endsWith(".md")) return undefined;
+    return displayPath(target, cwd) ?? target;
+  }
+
+  /**
+   * Built-in write/edit may target files inside the workflow's frozen plan output directory: the
+   * tool must be the built-in one (an extension override stays blocked), active, and its `path` must
+   * resolve inside the directory after `..` normalization and symlink resolution, and never at or
+   * under the pi agent dir or srt profile dir or onto a settings file. Returns the resolved target.
+   */
+  async function planOutputWriteTarget(toolName: string, input: unknown, ctx: ExtensionContext) {
+    const tool = toolByName(toolName);
+    if (!tool || !isBuiltinTool(tool)) return undefined;
+    if (!safeGetActiveTools().includes(toolName)) return undefined;
+    const outputDir = workflowOutputDir();
+    if (!outputDir) return undefined;
+    const path = readToolPath(input);
+    if (!path?.trim()) return undefined;
+    const target = resolveToolTargetPath(path, ctx.cwd ?? process.cwd());
+    if (await isProtectedPlanModePath(target)) return undefined;
+    return (await isPathInsidePlanOutputDir(target, outputDir)) ? target : undefined;
+  }
+
+  async function isProtectedPlanModePath(target: string) {
+    const candidates = [target];
+    const realTarget = await realpathThroughExistingAncestor(target);
+    if (realTarget) candidates.push(realTarget);
+    const { dirs, files } = protectedPlanModePaths();
+    for (const directory of dirs) {
+      const forms = [resolve(directory), (await realpathThroughExistingAncestor(resolve(directory))) ?? resolve(directory)];
+      if (candidates.some((candidate) => forms.some((form) => isAtOrUnderPath(candidate, form)))) return true;
+    }
+    for (const file of files) {
+      const forms = [resolve(file), (await realpathThroughExistingAncestor(resolve(file))) ?? resolve(file)];
+      if (candidates.some((candidate) => forms.includes(candidate))) return true;
+    }
+    return false;
   }
 
   async function acceptCompletedPlan(plan: string, source: PlanCompletionSource, ctx: ExtensionContext) {
@@ -1299,14 +1633,32 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     updateUi(ctx);
   }
 
-  /** Persist the completed plan as Markdown in the plan output directory; revisions overwrite the workflow's document. */
+  /**
+   * Persist the completed plan as Markdown in the workflow's verified output directory; revisions
+   * overwrite the workflow's document. A recorded path that is no longer a safe regular file inside
+   * that directory (e.g. a planted symlink or hard link) is abandoned for a freshly allocated one.
+   */
   async function persistPlanDocument(plan: string, ctx: ExtensionContext) {
     if (!state.enabled) return;
+    const outputDir = workflowOutputDir();
+    if (!outputDir) {
+      ctx.ui.notify("Plan document could not be written: the workflow's sandbox is not verified.", "warning");
+      return;
+    }
+    const planWorkflowGeneration = workflowGeneration;
     try {
-      const { outputDir } = effectiveSandboxProfile(ctx.cwd);
-      const path = state.planDocPath ?? allocatePlanDocPath(outputDir, plan);
-      await writePlanDoc(path, plan);
-      if (state.planDocPath !== path) state = { ...state, planDocPath: path };
+      const recorded = state.planDocPath;
+      let path = recorded && (await isSafePlanDocTarget(recorded, outputDir)) ? recorded : undefined;
+      for (let attempt = 0; ; attempt += 1) {
+        path ??= allocatePlanDocPath(outputDir, plan);
+        if (await isSafePlanDocTarget(path, outputDir)) break;
+        if (attempt >= 2) throw new Error(`no safe document path is available in ${outputDir}`);
+        path = undefined;
+      }
+      await writePlanDoc(path, plan, outputDir);
+      if (state.enabled && workflowGeneration === planWorkflowGeneration && state.planDocPath !== path) {
+        state = { ...state, planDocPath: path };
+      }
     } catch (error: unknown) {
       ctx.ui.notify(`Plan document could not be written: ${terminalErrorDetail(error)}`, "warning");
     }
@@ -1998,7 +2350,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     implementationRetention.restore(state.activeImplementation);
     updateUi(ctx);
     if (restoredState.enabled) {
-      void revalidateRestoredSandbox(ctx);
+      scheduleRestoredSandboxRevalidation(ctx);
     }
   }
 
@@ -2213,13 +2565,22 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     const previousSandbox = activeSandbox;
     const wasEnabled = state.enabled;
     activeSandbox = undefined;
-    trackedBashCalls.clear();
+    trackedPlanCalls.clear();
+    // A dropped sandbox is removed unless the candidate still records it; its re-probe removes it then.
+    const releasePreviousSandbox = () => {
+      if (previousSandbox && previousSandbox.settingsPath !== candidate.sandbox?.settingsPath) {
+        void removeSandboxFiles(previousSandbox);
+      }
+    };
     if (candidate.enabled && !workflowMutex.isOwner(workflowOwner)) {
       const owner = workflowMutex.acquire();
       if (!owner) {
         state = { enabled: false, awaitingAction: false };
         workflowAllowedToolNames = undefined;
         pendingWorkflowToolPolicy = undefined;
+        releasePreviousSandbox();
+        // The refused restore never re-probes, so its recorded files would otherwise leak.
+        void removeSandboxFiles(candidate.sandbox);
         reportRestoredWorkflowBusy(ctx);
         return false;
       }
@@ -2238,6 +2599,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
             workflowMutex.release(workflowOwner);
             workflowOwner = previousOwner;
           }
+          releasePreviousSandbox();
+          void removeSandboxFiles(candidate.sandbox);
           reportRestoredHelpersUnavailable(ctx);
           return false;
         }
@@ -2256,6 +2619,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       if (policyChanged) persistState();
       if (state.enabled) applyPlanThinkingLevel();
       else if (wasEnabled) releaseWorkflowOwner();
+      releasePreviousSandbox();
       return true;
     } catch (error: unknown) {
       try {

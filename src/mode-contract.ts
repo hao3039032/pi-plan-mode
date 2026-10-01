@@ -63,7 +63,15 @@ export function latestModeContract(messages: readonly unknown[]) {
   return undefined;
 }
 
-export function reconcileModeContract(messages: unknown[], expected: PlanModeContract) {
+/**
+ * Re-insert the expected contract when the latest one is missing (e.g. after compaction). Pass the
+ * active workflow's frozen sandbox info so a Plan fallback matches the originally published content.
+ */
+export function reconcileModeContract(
+  messages: unknown[],
+  expected: PlanModeContract,
+  sandbox?: PlanModePromptSandboxInfo,
+) {
   const latest = latestModeContract(messages);
   if (latest?.mode === expected) return messages;
 
@@ -71,7 +79,7 @@ export function reconcileModeContract(messages: unknown[], expected: PlanModeCon
   const insertionIndex = latestContractIndex >= 0 ? latestContractIndex + 1 : leadingSummaryBoundary(messages);
   return [
     ...messages.slice(0, insertionIndex),
-    createModeContractMessage(expected, 0),
+    createModeContractMessage(expected, 0, expected === "plan" ? sandbox : undefined),
     ...messages.slice(insertionIndex),
   ];
 }

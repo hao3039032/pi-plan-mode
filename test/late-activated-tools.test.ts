@@ -116,5 +116,5 @@ test("a late-admitted bash tool runs inside the srt sandbox wrap", async () => {
   assert.equal(await call("rm -rf build"), undefined);
   const wrappedInput = { command: "git status --short" };
   await mock.events.get("tool_call")?.[0]?.({ toolName: "bash", input: wrappedInput }, context.ctx);
-  assert.match(wrappedInput.command, /^'.*srt' -s '.*' -c 'git status --short'$/u);
+  assert.match(wrappedInput.command, /^CLAUDE_CODE_TMPDIR='[^']*' '.*srt' -s '.*' -c 'git status --short'$/u);
 });

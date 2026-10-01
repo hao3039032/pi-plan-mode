@@ -1,7 +1,7 @@
 const PLAN_CONTEXT_MARKER = "[CODEX-LIKE PLAN MODE ACTIVE]";
 
 export interface PlanModePromptSandboxInfo {
-  /** Absolute writable paths inside the sandbox (scratch + plan output directory). */
+  /** Writable paths inside the sandbox (plan output directory + user extras); the private scratch TMPDIR is implied. */
   writePaths: string[];
   /** Directory the agent may draft plan Markdown in. */
   planOutputDir: string;
@@ -18,10 +18,10 @@ export function buildSandboxPromptSection(sandbox: PlanModePromptSandboxInfo) {
     "## Sandboxed exploration",
     "",
     "- Shell commands run inside the Anthropic Sandbox Runtime (srt), an OS-level sandbox. You may run any command freely: pipes, redirects, subshells, variables, scripts — no command allowlist applies.",
-    `- Filesystem: reads are allowed everywhere except denied secret paths; writes are allowed only in: ${sandbox.writePaths.join(", ")}.`,
+    `- Filesystem: reads are allowed everywhere except denied secret paths; writes are allowed only in: ${sandbox.writePaths.join(", ")}, plus a private scratch directory exported as $TMPDIR (use it instead of /tmp, which is read-only).`,
     `- Network: ${network}.`,
     "- A failure like 'Operation not permitted', 'EPERM', or a proxy block is the sandbox boundary. Do not retry the same operation with different syntax; note the constraint in the plan instead.",
-    `- You may draft and iterate the plan as Markdown files in ${sandbox.planOutputDir}/; the user sees updates in the TUI (/plan show). The decision-ready plan itself must still be submitted with plan_mode_complete.`,
+    `- You may draft and iterate the plan as Markdown files in ${sandbox.planOutputDir}/, from the shell or with the write/edit tools (which work only for files inside that directory); the user sees updates in the TUI (/plan show). The decision-ready plan itself must still be submitted with plan_mode_complete.`,
   ].join("\n");
 }
 
@@ -38,7 +38,7 @@ You are in Plan Mode, a Codex-like collaboration mode for producing a decision-c
 - Treat requests to implement as requests to plan the implementation; do not edit files or carry out the plan.
 - Do not use update_plan/TODO tooling in Plan Mode; Plan Mode is conversational planning, not execution progress tracking.
 - Plan Mode keeps the session's model-visible tool schemas unchanged and enforces a runtime policy allowlist. Non-built-in tools are denied by default and may be allowed only when already active in Pi and explicitly selected by the user at their own risk.
-- Do not perform mutating actions: no edit/write tools, no patching, no formatting that rewrites files, no dependency installation, no commits, no migrations.
+- Do not perform mutating actions: no edit/write tools (except for plan Markdown files in the plan output directory), no patching, no formatting that rewrites files, no dependency installation, no commits, no migrations.
 
 ${sandboxSection}## Phase 1 — Ground in the environment
 

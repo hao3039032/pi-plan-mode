@@ -1,7 +1,7 @@
 # 🧭 pi-plan-mode — Plan in an OS Sandbox Before Pi Edits Code
 
 > **Fork note.** This is a fork of [@narumitw/pi-plan-mode](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-plan-mode) (MIT), split from the upstream monorepo with its history.
-> This fork replaces the reviewed shell-command allowlists with **the Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**: every Plan-mode `bash` call is wrapped in an OS-level sandbox (Seatbelt on macOS, bubblewrap on Linux, srt-win on Windows), so arbitrary exploration — pipes, redirects, subshells, scripts — runs freely while writes stay limited to the plan output directory and `/tmp`, and the network is deny-by-default. Completed plans persist as Markdown under `plans/` and echo in the TUI.
+> This fork replaces the reviewed shell-command allowlists with **the Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**: every Plan-mode `bash` call is wrapped in an OS-level sandbox (Seatbelt on macOS, bubblewrap on Linux, srt-win on Windows), so arbitrary exploration — pipes, redirects, subshells, scripts — runs freely while writes stay limited to the plan output directory plus a private per-workflow scratch `TMPDIR`, and the network is deny-by-default. Completed plans persist as Markdown under `plans/` and echo in the TUI.
 >
 > Install: `pi install git:github.com/hao3039032/pi-plan-mode` (remove `npm:@narumitw/pi-plan-mode` first). Then install the sandbox: `npm install -g @anthropic-ai/sandbox-runtime` plus its [platform dependencies](#-security-and-privacy).
 >
@@ -14,7 +14,7 @@ Use a Codex-like `/plan` mode to explore a codebase inside an OS sandbox, resolv
 ## ✨ Features
 
 - Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`; `/plan doctor` diagnoses the sandbox.
-- Runs every `bash` call inside the srt OS sandbox — no command-text allowlist; blocks mutating tools and PowerShell (v1 is bash-only) while keeping helper schemas stable.
+- Runs every `bash` call inside the srt OS sandbox — no command-text allowlist; blocks mutating tools (built-in `write`/`edit` work only for files inside the plan output directory) and PowerShell (v1 is bash-only) while keeping helper schemas stable.
 - Guides the agent through installing srt and its dependencies when the sandbox is unavailable, and stashes the planning prompt for the recovered start.
 - Uses structured questions for important ambiguity and explicit completion for a decision-ready plan.
 - Persists completed plans as Markdown in a `plans/` directory (revision-safe filenames) and renders them in the TUI with a path footer; draft updates echo on the tool result.
@@ -72,7 +72,7 @@ flowchart LR
     review -->|Export| exported["Markdown file"]
 ```
 
-During planning, the agent can inspect the project and ask material questions, but Plan mode blocks editing tools and unsafe shell forms. Implementation starts only after the plan is complete and you choose a handoff:
+During planning, the agent can inspect the project and ask material questions, but Plan mode blocks editing tools outside the plan output directory and sandboxes every shell command. Implementation starts only after the plan is complete and you choose a handoff:
 
 ```mermaid
 sequenceDiagram
@@ -125,10 +125,10 @@ See [command workflows](./docs/command-workflows.md) for tool selection, busy-st
 
 Plan-mode exploration is enforced by the **Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**, an OS-level sandbox — the same layer Claude Code uses — rather than by command-text allowlists:
 
-- **Filesystem**: reads are allowed everywhere except denied secret paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`, plus your `planSandbox.denyRead` entries); writes are allowed only in `/tmp` and the plan output directory (`planSandbox.allowWrite` adds more).
+- **Filesystem**: reads are allowed everywhere except denied secret paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`, plus your `planSandbox.denyRead` entries); writes are allowed only in the plan output directory (created at Plan start if missing) and a private per-workflow scratch directory exported to commands as `TMPDIR` (`planSandbox.allowWrite` adds more). `/tmp` itself is read-only. The srt profile files live in `<agent dir>/srt` (mode 0700, files 0600); the whole pi agent directory and the pi-plan-mode settings files are always in the profile's `denyWrite` — which takes precedence over `allowWrite` — so a sandboxed command can never rewrite its own sandbox, even with a widened `allowWrite`. The scratch directory and profile are removed when the workflow ends.
 - **Network**: denied for every domain by default; allow specific hosts with `planSandbox.allowedDomains` (wildcards like `*.npmjs.org`).
-- **Shell**: every `bash` call is rewritten to `srt -s <profile> -c '<command>'` in the `tool_call` hook — pipes, redirects, subshells, variables, and arbitrary commands all run inside the sandbox. `EPERM`/`Operation not permitted`/proxy denials are the boundary; annotated results tell the agent not to retry with different syntax.
-- **Tools**: built-in `edit`, `write`, `update_plan`, and `powershell` stay blocked (v1 sandboxes the `bash` tool only); in-process readers (`read`, `grep`, `find`, `ls`) stay allowed; explicitly selected non-built-in tools run at user risk, as upstream.
+- **Shell**: every `bash` call is rewritten to `CLAUDE_CODE_TMPDIR='<scratch>' srt -s <profile> -c '<command>'` in the `tool_call` hook (srt hands `CLAUDE_CODE_TMPDIR` to the command as `TMPDIR`) — pipes, redirects, subshells, variables, and arbitrary commands all run inside the sandbox. `EPERM`/`Operation not permitted`/proxy denials are the boundary; annotated results tell the agent not to retry with different syntax.
+- **Tools**: built-in `write` and `edit` are allowed only when active and only for targets that resolve (after `..` normalization and symlink resolution) inside the plan output directory — everything else, extension tools that override those names, `update_plan`, and `powershell` stay blocked (v1 sandboxes the `bash` tool only); in-process readers (`read`, `grep`, `find`, `ls`) stay allowed; explicitly selected non-built-in tools run at user risk, as upstream.
 
 **There is deliberately no allowlist fallback.** If the sandbox is unavailable, Plan start fails closed: the extension injects an agent-facing setup guide with the exact diagnosis and install commands (the agent must get your approval before installing), and `/plan <prompt>` stashes your prompt for the next successful start. Resumed workflows re-probe and leave Plan mode with the same guide when the sandbox is gone. Run `/plan doctor` for a human-readable check.
 
@@ -137,13 +137,13 @@ Plan-mode exploration is enforced by the **Anthropic Sandbox Runtime ([srt](http
 | Platform | Mechanism | Requirements |
 | --- | --- | --- |
 | macOS | Seatbelt (`sandbox-exec`) | `brew install ripgrep`; then `npm i -g @anthropic-ai/sandbox-runtime` |
-| Linux | bubblewrap + network namespace | `apt/dnf/pacman install bubblewrap socat ripgrep`; Ubuntu 24.04+ may need `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` |
+| Linux | bubblewrap + network namespace | `sudo pacman -S --needed bubblewrap socat ripgrep` (Arch), `sudo apt-get install -y …` (Debian/Ubuntu), `sudo dnf install -y …` (Fedora), `sudo zypper install -y …` (openSUSE); the setup guide detects the package manager on `PATH`. Ubuntu 24.04+ may need `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` |
 | Windows (alpha) | srt-win + WFP | one-time elevated `npx @anthropic-ai/sandbox-runtime windows-install`; PowerShell remains blocked in v1 |
 
 Set `PI_PLAN_MODE_SRT_PATH` to use a non-PATH srt binary.
 While Plan mode is active, it also instructs the agent not to edit files or implement the change, and another active-tool policy hiding `plan_mode_question`/`plan_mode_complete` still fails Plan start without widening that policy.
 
-**Plan documents.** The plan output directory (default `plans/`, configurable via `planOutputDir`) is sandbox-writable: the agent may draft and iterate Markdown there (each update echoes on the bash tool result), while every accepted `plan_mode_complete` plan is persisted by the extension as `plans/YYYY-MM-DD-<slug>.md` — revisions overwrite the same file, new workflows create a new one. The TUI renders the finished plan with a path footer, and `/plan show` renders the draft or finished document on demand. Track `plans/` in git (or ignore it) as you prefer.
+**Plan documents.** The plan output directory (default `plans/`, configurable via `planOutputDir`) is created at Plan start if missing and is sandbox-writable: the agent may draft and iterate Markdown there from the shell or with the built-in `write`/`edit` tools — a successful `write`/`edit` of a Markdown file there, or a Plan-mode `bash` call after which a top-level Markdown file in the directory is newer than the call (subdirectories are not scanned), annotates the tool result with `📄 Plan draft updated → <path>` — while every accepted `plan_mode_complete` plan is persisted by the extension as `plans/YYYY-MM-DD-<slug>.md` — revisions overwrite the same file, new workflows create a new one. The TUI renders the finished plan with a `📄 <path>` footer, the ready-plan menu lists the same path, and `/plan show` renders the draft or finished document on demand. Track `plans/` in git (or ignore it) as you prefer.
 
 ## 🧭 Planning and implementation
 
@@ -352,7 +352,7 @@ The optional file is read at session start and watched for changes; only an expl
   "defaultPlanExportPath": "PLAN.md",
   "planOutputDir": "plans",
   "planSandbox": {
-    "allowWrite": ["/tmp", "/absolute/path/to/plans"],
+    "allowWrite": ["/absolute/path/to/extra-cache"],
     "denyRead": ["~/.ssh", "**/.env"],
     "allowedDomains": []
   }
@@ -360,7 +360,7 @@ The optional file is read at session start and watched for changes; only an expl
 ```
 
 By default, Plan mode inherits thinking, allows active safe built-ins, uses the planning model and thinking level for fresh implementation, exports explicit copies to `PLAN.md`, and relies on ordinary conversation history after implementation starts.
-`planOutputDir` (default `plans`) is where accepted plans are persisted and made sandbox-writable; `planSandbox` extends the built-in profile — `/tmp` and the plan output directory are always writable, and the built-in secret deny-read list always applies.
+`planOutputDir` (default `plans`) is where accepted plans are persisted and made sandbox-writable (Plan start creates it if missing; a relative value must be a real, non-symlinked directory inside the working directory, and the resolved directory is frozen for the whole workflow); `planSandbox` extends the built-in profile — the plan output directory and the private scratch `TMPDIR` are always writable, the srt profile directory and pi-plan-mode settings files are always write-denied, and the built-in secret deny-read list always applies.
 The shortcut is disabled unless configured; enabling, changing, or removing it takes effect after `/reload` or restarting Pi.
 Until then, the current shortcut binding stays unchanged.
 Settings saves apply to later workflows; an active implementation keeps its captured reinjection policy.

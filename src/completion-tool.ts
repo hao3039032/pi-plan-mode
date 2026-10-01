@@ -51,9 +51,15 @@ export function planFromCompletionDetails(value: unknown) {
   return normalized.ok ? normalized.plan : undefined;
 }
 
-export function planModeCompleted(plan: string) {
+/**
+ * Completion tool result. `docPath` (the persisted plan document, for display) is echoed as a
+ * footer in the rendered content only; `details.plan` stays the exact plan so restores and
+ * implementation never see the footer.
+ */
+export function planModeCompleted(plan: string, docPath?: string) {
+  const footer = docPath ? `\n\n---\n📄 ${docPath}` : "";
   return {
-    content: [{ type: "text" as const, text: `**Proposed Plan**\n\n${plan}` }],
+    content: [{ type: "text" as const, text: `**Proposed Plan**\n\n${plan}${footer}` }],
     details: {
       version: PLAN_MODE_COMPLETE_VERSION,
       source: PLAN_MODE_COMPLETE_TOOL_NAME,

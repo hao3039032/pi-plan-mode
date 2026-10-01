@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { findAvailableImplementationModel, snapshotAvailableImplementationModels } from "./implementation-models.js";
+import { displayPath } from "./plan-docs.js";
 import type { PlanExportDestination } from "./plan-export.js";
 import {
   configuredImplementationModel,
@@ -135,8 +136,10 @@ export function createPlanActionController(options: PlanActionControllerOptions)
       if (!lifecycle.isCurrent() || lifecycle.signal.aborted) return;
       const ui = await options.loadInteractiveUi();
       if (!lifecycle.isCurrent() || lifecycle.signal.aborted) return;
+      const planDocPath = displayPath(options.getState().planDocPath, ctx.cwd);
       await ui.showReadyPlanMenu(ctx, {
         ...lifecycle,
+        ...(planDocPath ? { planDocPath } : {}),
         planThinkingLevel: options.getThinkingLevel(),
         implementationDefaults: configuredDefaults(),
         implementationOutcome: options.implementationOutcome,

@@ -194,7 +194,7 @@ export async function showPlanModeSettings(
                 {
                   id: "sandboxWrite",
                   label: "Sandbox write paths",
-                  description: "Extra writable paths inside the srt sandbox, comma-separated (always includes /tmp and the plan output dir).",
+                  description: "Extra writable paths inside the srt sandbox, comma-separated (always includes the plan output dir and a private scratch TMPDIR).",
                   currentValue: sandboxListValue(configuredPlanSandbox(state.settings).allowWrite),
                   action: "open-sandbox-write",
                 },
@@ -297,7 +297,7 @@ export async function showPlanModeSettings(
         title: "Sandbox write paths",
         lines: [
           `Configured: ${sandboxListValue(configuredPlanSandbox(state.settings).allowWrite)}`,
-          "/tmp and the plan output directory are always writable; add extra paths, comma-separated.",
+          "The plan output directory and a private scratch TMPDIR are always writable; add extra paths, comma-separated.",
           "Submit an empty value to keep only the defaults.",
         ],
         placeholder: sandboxListValue(configuredPlanSandbox(state.settings).allowWrite),
@@ -431,7 +431,7 @@ export async function showPlanModeSettings(
           signal,
           parsed
             ? `Sandbox write paths: ${safeTerminalText(parsed.join(", "))}.`
-            : "Sandbox write paths reset to defaults (/tmp + plan output dir).",
+            : "Sandbox write paths reset to defaults (plan output dir + private scratch TMPDIR).",
         );
         return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
       },

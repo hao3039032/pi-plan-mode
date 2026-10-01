@@ -1,9 +1,11 @@
+import { basename, isAbsolute, resolve } from "node:path";
 import {
   normalizePlanModeCompletion,
   PLAN_MODE_COMPLETE_TOOL_NAME,
   planFromCompletionDetails,
 } from "./completion-tool.js";
 import { type ImplementationModelOverride, isPendingImplementationModelIdentifier } from "./implementation-models.js";
+import { isSrtScratchDir, SRT_PROFILE_FILE_PATTERN } from "./srt-sandbox.js";
 import {
   IMPLEMENTATION_PLAN_RETENTIONS,
   type ImplementationPlanRetention,
@@ -28,9 +30,22 @@ export interface ActiveImplementationPlan {
   docPath?: string;
 }
 
-export interface PlanModeSandboxState {
+/**
+ * Sandbox boundary frozen when a Plan workflow starts: the verified real plan output directory and
+ * the planSandbox extras in force then. Settings changes apply to the next workflow only.
+ */
+export interface PlanSandboxSnapshot {
+  outputDir: string;
+  allowWrite: string[];
+  denyRead: string[];
+  allowedDomains: string[];
+}
+
+export interface PlanModeSandboxState extends Partial<PlanSandboxSnapshot> {
   srtPath: string;
   settingsPath: string;
+  /** Per-workflow private scratch directory handed to sandboxed commands as TMPDIR. */
+  scratchDir?: string;
 }
 
 export interface SavedPlan {
@@ -134,8 +149,31 @@ function normalizeSandboxState(value: unknown): PlanModeSandboxState | undefined
   if (!isRecord(value)) return undefined;
   const srtPath = boundedStringValue(value.srtPath, 4096);
   const settingsPath = boundedStringValue(value.settingsPath, 4096);
-  if (!srtPath || !settingsPath) return undefined;
-  return { srtPath, settingsPath };
+  // Persisted paths are deleted on cleanup, so only shapes this extension creates survive restore.
+  if (!srtPath || !settingsPath || !isAbsolute(settingsPath) || !SRT_PROFILE_FILE_PATTERN.test(basename(settingsPath))) {
+    return undefined;
+  }
+  const scratchDir = boundedStringValue(value.scratchDir, 4096);
+  const outputDir = boundedStringValue(value.outputDir, 4096);
+  const allowWrite = boundedStringArray(value.allowWrite);
+  const denyRead = boundedStringArray(value.denyRead);
+  const allowedDomains = boundedStringArray(value.allowedDomains);
+  const snapshot =
+    outputDir && isAbsolute(outputDir) && resolve(outputDir) === outputDir && allowWrite && denyRead && allowedDomains
+      ? { outputDir, allowWrite, denyRead, allowedDomains }
+      : {};
+  return {
+    srtPath,
+    settingsPath,
+    ...(scratchDir && isSrtScratchDir(scratchDir) ? { scratchDir } : {}),
+    ...snapshot,
+  };
+}
+
+function boundedStringArray(value: unknown) {
+  if (!Array.isArray(value) || value.length > 256) return undefined;
+  const items = value.map((item) => boundedStringValue(item, 4096));
+  return items.every((item): item is string => item !== undefined) ? Array.from(new Set(items)) : undefined;
 }
 
 function planDocPathValue(value: unknown) {

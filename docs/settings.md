@@ -30,7 +30,7 @@ The shortcut is disabled when `toggleShortcut` is omitted.
   "defaultPlanExportPath": "PLAN.md",
   "planOutputDir": "plans",
   "planSandbox": {
-    "allowWrite": ["/tmp", "/absolute/plans"],
+    "allowWrite": ["/absolute/extra-cache"],
     "denyRead": ["~/.secrets"],
     "allowedDomains": []
   },
@@ -133,14 +133,19 @@ Tree navigation and compaction do not apply pending shortcut changes.
 Omit it—or submit an empty value in Settings—to use `plans` under Pi's current working directory.
 The value must be a non-empty string of at most 4,096 characters without terminal control characters or NUL; relative values resolve against the working directory when a Plan workflow starts.
 Accepted `plan_mode_complete` plans are written as `plans/YYYY-MM-DD-<slug>.md` (slug from the first Markdown heading), revisions overwrite the same file, and collisions append `-2`, `-3`, …
-The directory is created on first write, and the agent may draft or iterate Markdown there while planning; each update echoes on the bash tool result and `/plan show` renders the newest draft.
+Plan start (and a restored workflow's sandbox re-probe) creates the directory if it is missing, so sandboxed commands can write into it from the first call; `/plan doctor` only reports whether it exists.
+A relative (or default) value must stay inside the working directory: Plan start fails closed (without a setup guide) when the directory or any path component below the working directory is a symlink, when it resolves outside the real working directory, or when it cannot be created. An absolute value is trusted as configured. No value may be, contain, or sit inside the pi agent directory (sessions, settings, srt profiles) or contain a pi-plan-mode settings file.
+Plan start freezes the resolved real directory (and the `planSandbox` extras) for the whole workflow: settings changes apply to the next workflow only. A resumed workflow reuses its frozen directory only while it is still a real directory inside the working directory or equal to the configured absolute directory, and reuses its frozen extras only when they are no wider than the current settings; otherwise it falls back to the current settings or leaves Plan mode with the reason.
+Plan documents are written through a temp file and renamed into place, so a symlink or hard link planted at a document path is replaced, never followed; such a path is abandoned for a freshly allocated filename.
+The agent may draft or iterate Markdown there while planning, from the shell or with the built-in `write`/`edit` tools (which Plan mode admits only for targets resolving inside this directory). A successful `write`/`edit` of a Markdown file there annotates its result with `📄 Plan draft updated → <path>`; after a Plan-mode `bash` call, the newest Markdown file modified since the call started at the top level of the directory (subdirectories are not scanned) is reported the same way, and `/plan show` renders the newest top-level draft.
+The `plan_mode_complete` result echoes the plan with a `📄 <path>` footer, and the ready-plan menu lists the same document path.
 
 ### Sandbox profile
 
 `planSandbox` tunes the srt OS sandbox that every Plan-mode `bash` call runs in.
 All three keys are optional string arrays; entries must be non-empty and are deduplicated in first-seen order.
 
-- `allowWrite` adds extra writable absolute paths. `/tmp` and the resolved plan output directory are always writable and cannot be removed.
+- `allowWrite` adds extra writable absolute paths. The resolved plan output directory and a private per-workflow scratch directory (`<os tmpdir>/pi-plan-mode-scratch-<uuid>`, mode 0700, exported to commands as `TMPDIR` and removed when the workflow ends) are always writable and cannot be removed; `/tmp` itself is read-only. The pi agent directory (including the srt profile directory `<agent dir>/srt` and session files) and the pi-plan-mode settings files are always in the profile's `denyWrite`, which srt applies with precedence over `allowWrite`, so no `allowWrite` entry can let a sandboxed command rewrite its own profile or settings.
 - `denyRead` adds extra read-denied paths on top of the built-in secret defaults (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`).
 - `allowedDomains` allows network access from the sandbox (wildcards like `*.npmjs.org`); the default empty list denies every domain.
 

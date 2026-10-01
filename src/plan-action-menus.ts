@@ -157,6 +157,8 @@ export async function showPlanModeMenu(ctx: ExtensionContext, options: PlanMenuO
 }
 
 interface ReadyPlanMenuOptions extends MenuLifecycle {
+  /** Display path of the persisted plan document, shown as a menu line. */
+  planDocPath?: string;
   planThinkingLevel: PlanModeFixedThinkingLevel | undefined;
   implementationDefaults?: ImplementationRuntimeSelection;
   implementationOutcome(): string;
@@ -192,7 +194,11 @@ export async function showReadyPlanMenu(ctx: ExtensionContext, options: ReadyPla
       ready: () => ({
         kind: "actions",
         title: "Proposed plan ready. What next?",
-        lines: [...IMPLEMENTATION_CONTEXT_LINES, options.implementationOutcome()],
+        lines: [
+          ...(options.planDocPath ? [`📄 ${sanitizeTerminalText(options.planDocPath)}`] : []),
+          ...IMPLEMENTATION_CONTEXT_LINES,
+          options.implementationOutcome(),
+        ],
         items: [
           {
             id: "implement-here",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { canSelectToolInPlanMode, classifyPlanModeTool, withRequiredPlanModeTools } from "../src/plan-mode.js";
-import { powershellBlockReason, readCommand } from "../src/tool-policy.js";
+import { isPlanOutputWriteToolName, powershellBlockReason, readCommand, readToolPath } from "../src/tool-policy.js";
 import { builtinTool, extensionTool } from "./support.js";
 
 test("tool selection allows safe built-ins and non-built-ins only", () => {
@@ -35,6 +35,16 @@ test("readCommand extracts the bash command string from tool input", () => {
   assert.equal(readCommand({}), "");
   assert.equal(readCommand(undefined), "");
   assert.equal(readCommand({ command: 42 }), "");
+});
+
+test("plan-output write helpers recognize write/edit and read their path argument", () => {
+  assert.equal(isPlanOutputWriteToolName("write"), true);
+  assert.equal(isPlanOutputWriteToolName("edit"), true);
+  assert.equal(isPlanOutputWriteToolName("bash"), false);
+  assert.equal(isPlanOutputWriteToolName("update_plan"), false);
+  assert.equal(readToolPath({ path: "plans/a.md", content: "x" }), "plans/a.md");
+  assert.equal(readToolPath({ file_path: "plans/a.md" }), undefined);
+  assert.equal(readToolPath(undefined), undefined);
 });
 
 test("powershellBlockReason explains the v1 bash-only sandbox", () => {

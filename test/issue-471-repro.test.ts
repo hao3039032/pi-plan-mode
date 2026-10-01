@@ -3,7 +3,7 @@ import { test } from "vitest";
 import { PLAN_MODE_MAX_CHARS } from "../src/completion-tool.js";
 import planModeExtension from "../src/plan-mode.js";
 import { type ActiveImplementationPlan, restorePlanModeState } from "../src/state.js";
-import { createCustomSelectorHarness, createMockContext, createMockPi } from "./support.js";
+import { createCustomSelectorHarness, createMockContext, createMockPi, sandboxDeps } from "./support.js";
 import { renderMockWidget } from "./widget-support.js";
 
 const PLAN = `# Compaction-safe implementation
@@ -14,6 +14,7 @@ Marker: PLAN-PERSIST-TEST-42
 2. Verify it after compaction.`;
 const STATE_ENTRY_TYPE = "plan-mode-state";
 const KEEP_SETTINGS = {
+  ...sandboxDeps(),
   readSettings: async () => ({
     kind: "loaded" as const,
     settings: {
@@ -690,6 +691,7 @@ test("a superseded session start cannot publish stale settings or UI state", asy
   const settingsLoads: ReturnType<typeof deferred<{ kind: "missing" }>>[] = [];
   const mock = createMockPi({ activeTools: ["read", "edit"] });
   planMode(mock.pi, {
+    ...sandboxDeps(),
     readSettings: () => {
       const load = deferred<{ kind: "missing" }>();
       settingsLoads.push(load);
