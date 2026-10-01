@@ -27,14 +27,15 @@ test("classifyPlanModeTool marks bash sandboxed, powershell blocked, readers rea
   assert.equal(classifyPlanModeTool(builtinTool("read") as PlanTool), "read-only");
   assert.equal(classifyPlanModeTool(builtinTool("grep") as PlanTool), "read-only");
   assert.equal(classifyPlanModeTool(builtinTool("powershell") as PlanTool), "blocked");
-  assert.equal(classifyPlanModeTool(builtinTool("update_plan") as PlanTool), "session");
+  // update_plan does not exist in pi; an unknown built-in name stays blocked.
+  assert.equal(classifyPlanModeTool(builtinTool("update_plan") as PlanTool), "blocked");
   const readOnlyExtension = { ...extensionTool("lsp_diagnostics"), annotations: { readOnlyHint: true } } as PlanTool;
   assert.equal(classifyPlanModeTool(readOnlyExtension), "read-only");
   const mutatingExtension = { ...extensionTool("custom"), annotations: { readOnlyHint: false } } as PlanTool;
   assert.equal(classifyPlanModeTool(mutatingExtension), "user-opt-in");
   const noAnnotations = extensionTool("custom") as PlanTool;
   assert.equal(classifyPlanModeTool(noAnnotations), "user-opt-in");
-  assert.equal(isAutoAdmittedPlanTool(builtinTool("update_plan") as PlanTool), true);
+  assert.equal(isAutoAdmittedPlanTool(builtinTool("update_plan") as PlanTool), false);
   assert.equal(isAutoAdmittedPlanTool(readOnlyExtension), true);
   assert.equal(isAutoAdmittedPlanTool(mutatingExtension), false);
   assert.equal(classifyPlanModeTool(extensionTool("custom") as PlanTool), "user-opt-in");

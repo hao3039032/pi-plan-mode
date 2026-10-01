@@ -4,9 +4,7 @@ import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 // tool runs every command inside a sandboxed process tree, so no command-text allowlist applies.
 // PowerShell is blocked in v1 because the SRT wrap covers the bash tool only.
 export const SAFE_BUILTIN_PLAN_TOOLS = new Set(["read", "bash", "grep", "find", "ls"]);
-// Session-state tools that cannot touch the filesystem: always admitted, no selection needed.
-const SESSION_BUILTIN_PLAN_TOOLS = new Set(["update_plan"]);
-export type PlanModeToolPolicy = "read-only" | "sandboxed" | "session" | "user-opt-in" | "blocked";
+export type PlanModeToolPolicy = "read-only" | "sandboxed" | "user-opt-in" | "blocked";
 
 // edit/write stay unselectable for the Plan policy; the tool_call hook admits the built-in
 // versions only for targets inside the plan output directory (see isPlanOutputWriteToolName).
@@ -28,14 +26,13 @@ export function classifyPlanModeTool(tool: ToolInfo): PlanModeToolPolicy {
   }
   if (BLOCKED_BUILTIN_TOOLS.has(tool.name)) return "blocked";
   if (tool.name === "bash") return "sandboxed";
-  if (SESSION_BUILTIN_PLAN_TOOLS.has(tool.name)) return "session";
   return SAFE_BUILTIN_PLAN_TOOLS.has(tool.name) ? "read-only" : "blocked";
 }
 
 /** Tools that cannot break anything and are therefore admitted without explicit selection. */
 export function isAutoAdmittedPlanTool(tool: ToolInfo) {
   const policy = classifyPlanModeTool(tool);
-  return policy === "read-only" || policy === "session" || policy === "sandboxed";
+  return policy === "read-only" || policy === "sandboxed";
 }
 
 export function canSelectToolInPlanMode(tool: ToolInfo) {

@@ -24,7 +24,6 @@ export function toolPolicyLabel(tool: ToolInfo) {
   const policy = classifyPlanModeTool(tool);
   if (policy === "read-only") return isBuiltinTool(tool) ? "built-in read-only" : `read-only hinted: ${toolSourceLabel(tool)}`;
   if (policy === "sandboxed") return "built-in · SRT-sandboxed shell";
-  if (policy === "session") return "built-in session tracker";
   if (policy === "blocked") return "built-in blocked";
   return `user opt-in: ${toolSourceLabel(tool)}`;
 }
@@ -47,7 +46,7 @@ export function filterAvailableSelectedToolNames(names: string[], tools: ToolInf
 export function defaultPlanModeToolNames(tools: ToolInfo[], configuredNames: string[] | undefined) {
   if (configuredNames !== undefined) return unique(configuredNames);
   // Automatic policy: every harmless tool (sandboxed bash, read-only built-ins and read-only
-  // hinted extension/MCP tools, session tools) is admitted without selection.
+  // hinted extension/MCP tools) is admitted without selection.
   return tools.filter((tool) => isAutoAdmittedPlanTool(tool)).map((tool) => tool.name);
 }
 

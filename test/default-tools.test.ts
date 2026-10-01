@@ -251,13 +251,12 @@ async function withAgentDir(run: (agentDir: string) => Promise<void>) {
   }
 }
 
-test("read-only-hinted extension tools and update_plan are admitted without selection", async () => {
+test("read-only-hinted extension tools are admitted without selection", async () => {
   const mock = createMockPi({
-    activeTools: ["read", "bash", "update_plan", "lsp_diagnostics", "firecrawl_scrape"],
+    activeTools: ["read", "bash", "lsp_diagnostics", "firecrawl_scrape"],
     allTools: [
       builtinTool("read"),
       builtinTool("bash"),
-      builtinTool("update_plan"),
       { ...extensionTool("lsp_diagnostics"), annotations: { readOnlyHint: true } },
       { ...extensionTool("firecrawl_scrape"), annotations: { readOnlyHint: false, destructiveHint: true } },
     ],
@@ -271,7 +270,6 @@ test("read-only-hinted extension tools and update_plan are admitted without sele
   const context = await start(mock);
 
   // Harmless tools bypass the explicit selection list.
-  assert.equal(await callTool(mock, context, "update_plan"), undefined);
   assert.equal(await callTool(mock, context, "lsp_diagnostics"), undefined);
   // A mutating extension tool without selection stays blocked.
   const blocked = (await callTool(mock, context, "firecrawl_scrape")) as { block?: boolean; reason?: string };

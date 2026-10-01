@@ -1,10 +1,16 @@
 # @narumitw/pi-plan-mode
 
+## 0.59.2 (fork)
+
+### Patch Changes
+
+- Remove the `update_plan` session-tracker carve-out: pi has no such built-in tool, so it is classified as an unknown built-in and stays blocked like any other unrecognized built-in name. The plan contract no longer mentions it.
+
 ## 0.59.1 (fork)
 
 ### Minor Changes
 
-- Admit every harmless tool automatically during Plan mode: sandboxed `bash`, built-in readers, `update_plan` (session-only state, unblocked), and extension/MCP tools whose `readOnlyHint` annotation marks them non-mutating. Explicit selection is now only required for tools that can mutate or reach unknown systems. Harmless tools are also admitted on first use when activated mid-workflow, with or without an explicit selection list. The bash/wrap, write/edit (plans-dir-only) and PowerShell blocks are unchanged.
+- Admit every harmless tool automatically during Plan mode: sandboxed `bash`, built-in readers, and extension/MCP tools whose `readOnlyHint` annotation marks them non-mutating (`update_plan` does not exist in pi and stays classified as an unknown blocked built-in). Explicit selection is now only required for tools that can mutate or reach unknown systems. Harmless tools are also admitted on first use when activated mid-workflow, with or without an explicit selection list. The bash/wrap, write/edit (plans-dir-only) and PowerShell blocks are unchanged.
 
 ## 0.59.0 (fork)
 
