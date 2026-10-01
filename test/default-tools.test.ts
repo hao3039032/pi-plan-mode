@@ -101,7 +101,9 @@ test("configured Plan tools are an allowlist over active tools, not an activatio
     const context = await start(mock);
 
     assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
-    for (const name of ["read", "bash", "custom", "write", "missing"]) {
+    // read is harmless and active: admitted without selection. write is mutating: blocked.
+    assert.equal((await callTool(mock, context, "read")) as { block?: boolean } | undefined, undefined);
+    for (const name of ["bash", "custom", "write", "missing"]) {
       const result = (await callTool(mock, context, name)) as { block?: boolean } | undefined;
       assert.equal(result?.block, true, name);
     }
@@ -154,18 +156,13 @@ test("active selected custom tools execute while deselected and mutating tools f
   assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
   assert.equal(await callTool(mock, context, "custom"), undefined);
   assert.equal(await callTool(mock, context, "bash", { command: "git status --short" }), undefined);
-  for (const name of ["read", "write", "update_plan"]) {
-    const result = (await callTool(mock, context, name)) as { block?: boolean } | undefined;
-    assert.equal(result?.block, true, name);
-  }
+  assert.equal(await callTool(mock, context, "read"), undefined, "harmless reader needs no selection");
+  assert.equal(((await callTool(mock, context, "write")) as { block?: boolean }).block, true);
 });
 
 test("automatic and explicit-empty policy defaults remain distinct without changing schemas", async () => {
   const allTools = [builtinTool("read"), builtinTool("bash"), builtinTool("write")];
-  for (const [configured, allowed] of [
-    [undefined, ["read", "bash"]],
-    [[], []],
-  ] as const) {
+  for (const configured of [undefined, []] as const) {
     const mock = createMockPi({ activeTools: ["read", "bash", "write"], allTools });
     planMode(mock.pi, {
       readSettings: async () => ({
@@ -178,11 +175,12 @@ test("automatic and explicit-empty policy defaults remain distinct without chang
     });
     const context = await start(mock);
     assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "write", ...HELPERS]);
+    // Harmless tools are admitted in both automatic and explicit-empty policies.
     for (const name of ["read", "bash"]) {
       const result = (await callTool(mock, context, name, name === "bash" ? { command: "git status --short" } : {})) as
         | { block?: boolean }
         | undefined;
-      assert.equal(result?.block, allowed.some((candidate) => candidate === name) ? undefined : true, name);
+      assert.equal(result?.block, undefined, name);
     }
   }
 });
@@ -203,7 +201,8 @@ test("an active workflow snapshots defaults instead of following later settings 
   loaded.defaultPlanTools = ["bash"];
 
   assert.equal(await callTool(mock, context, "read"), undefined);
-  assert.equal(((await callTool(mock, context, "bash", { command: "pwd" })) as { block?: boolean }).block, true);
+  // bash is sandboxed and harmless-by-construction: admitted regardless of the settings snapshot.
+  assert.equal(await callTool(mock, context, "bash", { command: "pwd" }), undefined);
 });
 
 test("branch-restored selections constrain policy while helpers remain model-visible", async () => {
@@ -251,3 +250,31 @@ async function withAgentDir(run: (agentDir: string) => Promise<void>) {
     await rm(agentDir, { recursive: true, force: true });
   }
 }
+
+test("read-only-hinted extension tools and update_plan are admitted without selection", async () => {
+  const mock = createMockPi({
+    activeTools: ["read", "bash", "update_plan", "lsp_diagnostics", "firecrawl_scrape"],
+    allTools: [
+      builtinTool("read"),
+      builtinTool("bash"),
+      builtinTool("update_plan"),
+      { ...extensionTool("lsp_diagnostics"), annotations: { readOnlyHint: true } },
+      { ...extensionTool("firecrawl_scrape"), annotations: { readOnlyHint: false, destructiveHint: true } },
+    ],
+  });
+  planMode(mock.pi, {
+    readSettings: async () => ({
+      kind: "loaded" as const,
+      settings: { thinkingLevel: "inherit" as const, defaultPlanTools: ["bash"] },
+    }),
+  });
+  const context = await start(mock);
+
+  // Harmless tools bypass the explicit selection list.
+  assert.equal(await callTool(mock, context, "update_plan"), undefined);
+  assert.equal(await callTool(mock, context, "lsp_diagnostics"), undefined);
+  // A mutating extension tool without selection stays blocked.
+  const blocked = (await callTool(mock, context, "firecrawl_scrape")) as { block?: boolean; reason?: string };
+  assert.equal(blocked.block, true);
+  assert.match(blocked.reason ?? "", /not selected by the Plan policy/u);
+});

@@ -126,6 +126,7 @@ import {
 import {
   canSelectToolInPlanMode,
   classifyPlanModeTool,
+  isAutoAdmittedPlanTool,
   isBuiltinTool,
   isPlanOutputWriteToolName,
   powershellBlockReason,
@@ -137,7 +138,7 @@ import { WorkflowMutex, type WorkflowMutexOwner } from "./workflow-mutex.js";
 
 const STATE_ENTRY_TYPE = "plan-mode-state";
 const RECOVERED_RUNTIME_ADMISSION_INPUT_MESSAGE_TYPE = "plan-mode-recovered-input";
-const BLOCKED_MUTATING_TOOLS = new Set(["edit", "write", "update_plan"]);
+const BLOCKED_MUTATING_TOOLS = new Set(["edit", "write"]);
 /** Subdirectory of the pi agent dir holding srt profiles; never sandbox-writable. */
 const SRT_PROFILE_DIR_NAME = "srt";
 const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
@@ -736,10 +737,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     if (BLOCKED_MUTATING_TOOLS.has(event.toolName)) {
       return {
         block: true,
-        reason:
-          event.toolName === "update_plan"
-            ? "Plan mode blocks update_plan because it tracks execution progress rather than conversational planning."
-            : `Plan mode blocks mutating tool '${event.toolName}'.`,
+        reason: `Plan mode blocks mutating tool '${event.toolName}'.`,
       };
     }
     if (event.toolName === "powershell") {
@@ -775,7 +773,10 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
           : `Plan mode blocks tool '${event.toolName}' because it is registered but inactive. Activate it before starting the next Plan workflow.`,
       };
     }
-    if (!allowedToolNames.has(event.toolName) && !admitLateActivatedExplicitTool(event.toolName, ctx)) {
+    if (
+      !allowedToolNames.has(event.toolName) &&
+      !admitLateActivatedPlanTool(event.toolName, ctx)
+    ) {
       return {
         block: true,
         reason: workflowDesiredToolNames().has(event.toolName)
@@ -2211,6 +2212,32 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     return true;
   }
 
+  // Harmless tools (sandboxed bash, read-only built-ins/annotations, session tools) never need
+  // explicit selection: admit them on first use even when they became active after the freeze.
+  function admitLateActivatedPlanTool(toolName: string, ctx: ExtensionContext) {
+    // Explicitly selected tools keep the fork's late-admission behavior.
+    if (admitLateActivatedExplicitTool(toolName, ctx)) return true;
+    // Harmless tools (sandboxed bash, readers, read-only hinted extensions, session tools)
+    // never need selection and are admitted on first use whenever they are active.
+    const calledTool = toolByName(toolName);
+    if (!calledTool || !isAutoAdmittedPlanTool(calledTool)) return false;
+    return admitUnselectedAutoTool(toolName, ctx);
+  }
+
+  function admitUnselectedAutoTool(toolName: string, ctx: ExtensionContext) {
+    workflowAllowedToolNames = [...new Set([...(workflowAllowedToolNames ?? []), toolName])];
+    const policy = state.workflowToolPolicy;
+    state = {
+      ...state,
+      ...(policy
+        ? { workflowToolPolicy: { ...policy, allowedNames: [...new Set([...policy.allowedNames, toolName])] } }
+        : {}),
+    };
+    persistState();
+    updateUi(ctx);
+    return true;
+  }
+
   function toolPolicySelectionIsExplicit() {
     return (
       state.selectedToolNames !== undefined ||
@@ -2741,7 +2768,15 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
   function formatToolSummary() {
     const names = planModePolicyToolNames();
-    return `Plan policy allows: ${names.length > 0 ? names.join(", ") : "none"}. Model-visible tools stay unchanged.`;
+    const autoNames = safeGetAllTools()
+      .filter((tool) => isAutoAdmittedPlanTool(tool) && safeGetActiveTools().includes(tool.name))
+      .map((tool) => tool.name)
+      .filter((name) => !names.includes(name));
+    const listed = [...names, ...autoNames];
+    return [
+      `Plan tools: ${listed.length > 0 ? listed.join(", ") : "none"} (harmless tools need no selection).`,
+      "Bash runs any command inside the srt sandbox; write/edit stay limited to the plan output dir.",
+    ].join(" ");
   }
 
   function toolByName(toolName: string) {

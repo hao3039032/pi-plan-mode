@@ -1,6 +1,6 @@
 {
   "name": "@hao3039032/pi-plan-mode",
-  "version": "0.59.0",
+  "version": "0.59.1",
   "description": "Fork of @narumitw/pi-plan-mode: Plan-mode exploration runs inside the Anthropic Sandbox Runtime (srt) OS sandbox; completed plans persist as Markdown in a plans/ directory with TUI echo.",
   "type": "module",
   "license": "MIT",

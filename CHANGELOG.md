@@ -1,5 +1,11 @@
 # @narumitw/pi-plan-mode
 
+## 0.59.1 (fork)
+
+### Minor Changes
+
+- Admit every harmless tool automatically during Plan mode: sandboxed `bash`, built-in readers, `update_plan` (session-only state, unblocked), and extension/MCP tools whose `readOnlyHint` annotation marks them non-mutating. Explicit selection is now only required for tools that can mutate or reach unknown systems. Harmless tools are also admitted on first use when activated mid-workflow, with or without an explicit selection list. The bash/wrap, write/edit (plans-dir-only) and PowerShell blocks are unchanged.
+
 ## 0.59.0 (fork)
 
 ### Patch Changes
