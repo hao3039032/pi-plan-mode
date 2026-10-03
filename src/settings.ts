@@ -89,6 +89,8 @@ export interface PlanSandboxSettings {
 export interface PlanModeSettings {
   thinkingLevel: PlanModeThinkingLevel;
   defaultPlanTools?: string[];
+  planAdmittedAgents?: string[];
+  planAdmitWorkflowScripts?: boolean;
   implementationPlanRetention?: ImplementationPlanRetention;
   defaultImplementationModel?: ImplementationModelOverride;
   defaultImplementationThinkingLevel?: PlanModeFixedThinkingLevel;
@@ -100,6 +102,8 @@ export interface PlanModeSettings {
 export interface PlanModeSettingsPatch {
   thinkingLevel?: PlanModeThinkingLevel;
   defaultPlanTools?: readonly string[] | null;
+  planAdmittedAgents?: readonly string[] | null;
+  planAdmitWorkflowScripts?: boolean | null;
   implementationPlanRetention?: ImplementationPlanRetention;
   defaultImplementationModel?: ImplementationModelOverride | null;
   defaultImplementationThinkingLevel?: PlanModeFixedThinkingLevel | null;
@@ -148,6 +152,16 @@ export function normalizePlanModeSettings(value: unknown): PlanModeSettings | un
     const defaultPlanTools = normalizeToolNames(Reflect.get(value, "defaultPlanTools"));
     if (!defaultPlanTools) return undefined;
     settings.defaultPlanTools = defaultPlanTools;
+  }
+  if (Object.hasOwn(value, "planAdmittedAgents")) {
+    const planAdmittedAgents = normalizeToolNames(Reflect.get(value, "planAdmittedAgents"));
+    if (!planAdmittedAgents) return undefined;
+    settings.planAdmittedAgents = planAdmittedAgents;
+  }
+  if (Object.hasOwn(value, "planAdmitWorkflowScripts")) {
+    const planAdmitWorkflowScripts = Reflect.get(value, "planAdmitWorkflowScripts");
+    if (typeof planAdmitWorkflowScripts !== "boolean") return undefined;
+    settings.planAdmitWorkflowScripts = planAdmitWorkflowScripts;
   }
   if (Object.hasOwn(value, "implementationPlanRetention")) {
     const implementationPlanRetention = Reflect.get(value, "implementationPlanRetention");
@@ -336,6 +350,14 @@ export function updatePlanModeSettings(
     if (patch.defaultPlanTools === null) delete updated.defaultPlanTools;
     else if (patch.defaultPlanTools !== undefined) {
       updated.defaultPlanTools = [...patch.defaultPlanTools];
+    }
+    if (patch.planAdmittedAgents === null) delete updated.planAdmittedAgents;
+    else if (patch.planAdmittedAgents !== undefined) {
+      updated.planAdmittedAgents = [...patch.planAdmittedAgents];
+    }
+    if (patch.planAdmitWorkflowScripts === null) delete updated.planAdmitWorkflowScripts;
+    else if (patch.planAdmitWorkflowScripts !== undefined) {
+      updated.planAdmitWorkflowScripts = patch.planAdmitWorkflowScripts;
     }
     if (patch.implementationPlanRetention !== undefined) {
       updated.implementationPlanRetention = patch.implementationPlanRetention;
@@ -554,4 +576,14 @@ export function configuredPlanOutputDir(settings: PlanModeSettings) {
 
 export function configuredPlanSandbox(settings: PlanModeSettings): PlanSandboxSettings {
   return settings.planSandbox ?? {};
+}
+
+/** Trusted agent names Plan mode auto-admits for read-only delegation calls. */
+export function configuredPlanAdmittedAgents(settings: PlanModeSettings): string[] {
+  return settings.planAdmittedAgents ?? [];
+}
+
+/** Whether `workflow: true` script delegation calls are admitted during Plan mode. */
+export function configuredPlanAdmitWorkflowScripts(settings: PlanModeSettings): boolean {
+  return settings.planAdmitWorkflowScripts === true;
 }

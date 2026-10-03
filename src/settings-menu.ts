@@ -57,6 +57,7 @@ export interface PlanModeSettingsMenuOptions {
 type Screen =
   | "settings"
   | "tools"
+  | "delegation-agents"
   | "implementation-model"
   | "export"
   | "shortcut"
@@ -70,6 +71,9 @@ type Action =
   | "toggle-tool"
   | "reset-tools"
   | "set-retention"
+  | "open-delegation-agents"
+  | "set-delegation-agents"
+  | "set-delegation-scripts"
   | "open-implementation-model"
   | "set-implementation-model"
   | "set-implementation-thinking"
@@ -145,6 +149,21 @@ export async function showPlanModeSettings(
                   description: "Choose available tools or retain names to resolve before the first request.",
                   currentValue: defaultToolsValue(state.settings.defaultPlanTools),
                   action: "open-tools",
+                },
+                {
+                  id: "planAdmittedAgents",
+                  label: "Delegation agents",
+                  description: "Agents Plan mode may run through read-only subagent delegation without opt-in each time.",
+                  currentValue: admittedAgentsValue(state.settings.planAdmittedAgents),
+                  action: "open-delegation-agents",
+                },
+                {
+                  id: "planAdmitWorkflowScripts",
+                  label: "Delegation scripts",
+                  description: "Admit subagent workflow scripts during Plan mode. Scripts can spawn any agent with host-side effects; full trust.",
+                  currentValue: state.settings.planAdmitWorkflowScripts === true ? "admitted (full trust)" : "blocked",
+                  values: ["blocked", "admitted (full trust)"],
+                  action: "set-delegation-scripts",
                 },
                 {
                   id: "implementationPlanRetention",
@@ -234,6 +253,18 @@ export async function showPlanModeSettings(
             action: "reset-tools",
           },
         ],
+        hint: "back",
+      }),
+      "delegation-agents": ({ state }) => ({
+        kind: "input",
+        title: "Delegation agents",
+        lines: [
+          `Configured: ${admittedAgentsValue(state.settings.planAdmittedAgents)}`,
+          "Comma-separated agent names admitted for Plan-mode subagent delegation (plan-scout needs no entry).",
+          "Admitting an agent trusts its definition (tools, runners, extensions); submit an empty value to clear the list.",
+        ],
+        placeholder: state.settings.planAdmittedAgents?.join(", ") ?? "plan-scout, reviewer",
+        action: "set-delegation-agents",
         hint: "back",
       }),
       "implementation-model": ({ state }) => ({
@@ -343,6 +374,32 @@ export async function showPlanModeSettings(
         );
       },
       "open-tools": async () => ({ kind: "to", screen: "tools" }),
+      "open-delegation-agents": async () => ({ kind: "to", screen: "delegation-agents" }),
+      "set-delegation-agents": async ({ ctx: actionCtx, value, signal }) => {
+        const parsed = parseSandboxList(value);
+        const planAdmittedAgents = parsed ?? null;
+        const result = await savePatch(
+          actionCtx,
+          { planAdmittedAgents },
+          signal,
+          parsed
+            ? `Delegation agents: ${safeTerminalText(parsed.join(", "))}.`
+            : "Delegation agents cleared; only plan-scout and verified read-only agents are admitted.",
+        );
+        return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
+      },
+      "set-delegation-scripts": async ({ ctx: actionCtx, value, signal }) => {
+        if (value !== "blocked" && value !== "admitted (full trust)") return { kind: "rejected" };
+        const planAdmitWorkflowScripts = value === "admitted (full trust)" ? true : null;
+        return savePatch(
+          actionCtx,
+          { planAdmitWorkflowScripts },
+          signal,
+          planAdmitWorkflowScripts
+            ? "Delegation scripts admitted (full trust): subagent workflow scripts may spawn any agent with host-side effects during Plan mode."
+            : "Delegation scripts blocked: planAdmitWorkflowScripts is off.",
+        );
+      },
       "set-retention": async ({ ctx: actionCtx, value, signal }) => {
         const implementationPlanRetention = retentionFromLabel(value);
         if (!implementationPlanRetention) return { kind: "rejected" };
@@ -634,6 +691,11 @@ function defaultToolsValue(configured: string[] | undefined) {
   if (configured === undefined) return "Automatic safe built-ins";
   if (configured.length === 0) return "No optional tools";
   return `${configured.length} selected`;
+}
+
+function admittedAgentsValue(configured: string[] | undefined) {
+  if (configured === undefined || configured.length === 0) return "plan-scout + verified read-only only";
+  return safeTerminalText(configured.join(", "));
 }
 
 function defaultToolItems(

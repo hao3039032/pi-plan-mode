@@ -4,6 +4,7 @@
 
 - [Default Plan policy tools](#default-plan-policy-tools)
 - [Enable inactive built-in search tools in Pi](#enable-inactive-built-in-search-tools)
+- [Delegation admission](#delegation-admission)
 - [Plan reinjection](#plan-reinjection)
 - [Fresh implementation runtime](#fresh-implementation-runtime)
 - [Export destination](#export-destination)
@@ -14,7 +15,7 @@
 
 ## ⚙️ Settings
 
-Run `/plan settings` or open **Settings** from an inactive `/plan` menu to edit **Plan thinking**, **Plan policy tools**, **Plan reinjection**, **Fresh model**, **Fresh thinking**, **Export destination**, **Plan output dir**, **Sandbox write paths**, **Sandbox deny-read**, **Sandbox network**, and **Plan mode shortcut**.
+Run `/plan settings` or open **Settings** from an inactive `/plan` menu to edit **Plan thinking**, **Plan policy tools**, **Delegation agents**, **Delegation scripts**, **Plan reinjection**, **Fresh model**, **Fresh thinking**, **Export destination**, **Plan output dir**, **Sandbox write paths**, **Sandbox deny-read**, **Sandbox network**, and **Plan mode shortcut**.
 You can also edit `$PI_CODING_AGENT_DIR/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`) manually.
 The optional file is read at session start, watched for changes, and created only by an explicit Settings save or manual edit.
 The shortcut is disabled when `toggleShortcut` is omitted.
@@ -30,6 +31,8 @@ The shortcut is disabled when `toggleShortcut` is omitted.
   "defaultImplementationThinkingLevel": "high",
   "defaultPlanExportPath": "PLAN.md",
   "planOutputDir": "plans",
+  "planAdmittedAgents": ["researcher"],
+  "planAdmitWorkflowScripts": false,
   "planSandbox": {
     "allowWrite": ["/absolute/extra-cache"],
     "denyRead": ["~/.secrets"],
@@ -92,6 +95,18 @@ On Pi 0.99 or newer only, the modifier form appends to the defaults instead of r
 
 Do not use the modifier form on older releases.
 Registered codemode or deferred tools do not need activation to be selectable: Plan mode can select them up front, and they run through other tools' nested calls.
+
+### Delegation admission
+
+`planAdmittedAgents` (optional string list) names subagents that Plan-mode `subagent` calls may run without per-agent verification — the parameter whitelist still applies to the call itself.
+Omit it or submit an empty value in Settings to rely on the built-in `plan-scout` plus verified read-only admission only.
+The built-in `plan-scout` never needs an entry: the extension registers it at session start (read-only tools `read`/`grep`/`find`/`ls`) unless a configured agent already uses the name, in which case `/plan doctor` reports the collision and the name stays reserved.
+
+`planAdmitWorkflowScripts` (default `false`) admits `workflow: true` script delegation during Plan mode.
+Scripts can spawn arbitrary agents and carry host-side `gate`/`output` effects that no static check can bound, so enabling this setting is a full trust decision.
+
+Verified read-only admission runs automatically for agents outside the list: the pi-subagents preflight contract must show an explicit, entirely read-only tool allowlist (the read-only universe is `read`/`grep`/`find`/`ls`, the coordination tools `contact_supervisor`/`intercom`/`structured_output`, and parent tools annotated `readOnlyHint` without `destructiveHint`), no child extensions, and a definition file without `runner`, `machine`, `defaultAcceptance`/`acceptance`, `extensions`/`subagentOnlyExtensions`, or an absolute/`..` `output`.
+When pi-subagents or its preflight export is missing, verification degrades to `plan-scout` + `planAdmittedAgents` only (`/plan doctor` shows the mode).
 
 ### Plan reinjection
 

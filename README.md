@@ -16,6 +16,7 @@ Use a Codex-like `/plan` mode to explore a codebase inside an OS sandbox, resolv
 - Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`; `/plan doctor` diagnoses the sandbox.
 - Runs every `bash` call inside the srt OS sandbox — no command-text allowlist; blocks mutating tools (built-in `write`/`edit` work only for files inside the plan output directory) and PowerShell (v1 is bash-only) while keeping helper schemas stable.
 - Understands Pi 1.0 tool exposure: native MCP and built-in extension tools are auto-admitted when they declare a read-only hint (or explicit opt-in otherwise), and registered codemode/deferred tools may be selected without activation and then run through other tools; every nested call is checked on its own.
+- Ships `plan-scout`, a read-only recon subagent registered through pi-subagents, and auto-admits per-call read-only delegation: single-child or static `tasks`/`chain` batches to plan-scout, `planAdmittedAgents`, or agents verified read-only via the pi-subagents preflight contract — without host-side parameters (`gate`, `acceptance`, `share`, `worktree`, `cwd`, output paths, …).
 - Guides the agent through installing srt and its dependencies when the sandbox is unavailable, and stashes the planning prompt for the recovered start.
 - Uses structured questions for important ambiguity and explicit completion for a decision-ready plan.
 - Persists completed plans as Markdown in a `plans/` directory (revision-safe filenames) and renders them in the TUI with a path footer; draft updates echo on the tool result.
@@ -130,6 +131,7 @@ Plan-mode exploration is enforced by the **Anthropic Sandbox Runtime ([srt](http
 - **Network**: denied for every domain by default; allow specific hosts with `planSandbox.allowedDomains` (wildcards like `*.npmjs.org`).
 - **Shell**: every `bash` call is rewritten to `CLAUDE_CODE_TMPDIR='<scratch>' srt -s <profile> -c '<command>'` in the `tool_call` hook (srt hands `CLAUDE_CODE_TMPDIR` to the command as `TMPDIR`) — pipes, redirects, subshells, variables, and arbitrary commands all run inside the sandbox. `EPERM`/`Operation not permitted`/proxy denials are the boundary; annotated results tell the agent not to retry with different syntax.
 - **Tools**: built-in `write` and `edit` are allowed only when active and only for targets that resolve (after `..` normalization and symlink resolution) inside the plan output directory — everything else, extension tools that override those names, other unknown built-ins, and `powershell` stay blocked (v1 sandboxes the `bash` tool only); in-process readers (`read`, `grep`, `find`, `ls`) stay allowed; explicitly selected non-built-in tools run at user risk, as upstream.
+- **Delegation**: `subagent` calls are admitted per call only when every referenced agent is provably safe — the built-in `plan-scout` (registered with `read`/`grep`/`find`/`ls` only), names you list in `planAdmittedAgents`, or agents whose pi-subagents preflight contract shows an explicit, entirely read-only tool allowlist with no child extensions and whose definition file carries no runner/machine/acceptance/extension directives or output escapes. The call itself must be a single child or a static `tasks`/`chain` batch and may carry only safe parameters: `gate`, `acceptance` (other than `false`), `share`, `worktree`, `isolation`, `sessionDir`, `machine`, `cwd`, and output paths stay host-side and deny the exemption. Workflow scripts are never admitted unless you enable `planAdmitWorkflowScripts` (full trust: a script can spawn any agent and carry host-side gates and outputs). A name collision between `plan-scout` and a configured agent disables the registration (shown by `/plan doctor`) rather than breaking pi-subagents.
 
 **There is deliberately no allowlist fallback.** If the sandbox is unavailable, Plan start fails closed: the extension injects an agent-facing setup guide with the exact diagnosis and install commands (the agent must get your approval before installing), and `/plan <prompt>` stashes your prompt for the next successful start. Resumed workflows re-probe and leave Plan mode with the same guide when the sandbox is gone. Run `/plan doctor` for a human-readable check.
 
@@ -353,6 +355,8 @@ The optional file is read at session start and watched for changes; only an expl
   "defaultImplementationThinkingLevel": "high",
   "defaultPlanExportPath": "PLAN.md",
   "planOutputDir": "plans",
+  "planAdmittedAgents": ["researcher"],
+  "planAdmitWorkflowScripts": false,
   "planSandbox": {
     "allowWrite": ["/absolute/path/to/extra-cache"],
     "denyRead": ["~/.ssh", "**/.env"],
@@ -362,6 +366,7 @@ The optional file is read at session start and watched for changes; only an expl
 ```
 
 By default, Plan mode inherits thinking, allows active safe built-ins, uses the planning model and thinking level for fresh implementation, exports explicit copies to `PLAN.md`, and relies on ordinary conversation history after implementation starts.
+`planAdmittedAgents` (optional list) names subagents that Plan-mode delegation calls may run without per-agent verification, and `planAdmitWorkflowScripts` (default `false`) admits `workflow: true` script delegation with full trust — a script can spawn any agent and carry host-side `gate`/`output` effects, so leave it off unless you accept that.
 `planOutputDir` (default `plans`) is where accepted plans are persisted and made sandbox-writable (Plan start creates it if missing; a relative value must be a real, non-symlinked directory inside the working directory, and the resolved directory is frozen for the whole workflow); `planSandbox` extends the built-in profile — the plan output directory and the private scratch `TMPDIR` are always writable, the srt profile directory and pi-plan-mode settings files are always write-denied, and the built-in secret deny-read list always applies.
 The shortcut is disabled unless configured; enabling, changing, or removing it takes effect after `/reload` or restarting Pi.
 Until then, the current shortcut binding stays unchanged.

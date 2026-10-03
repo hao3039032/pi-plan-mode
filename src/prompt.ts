@@ -25,8 +25,16 @@ export function buildSandboxPromptSection(sandbox: PlanModePromptSandboxInfo) {
   ].join("\n");
 }
 
-export function buildPlanModePrompt(sandbox?: PlanModePromptSandboxInfo) {
+export interface PlanModeDelegationInfo {
+  /** Whether the plan-scout read-only subagent is registered and auto-admitted. */
+  scoutRegistered: boolean;
+}
+
+export function buildPlanModePrompt(sandbox?: PlanModePromptSandboxInfo, delegation?: PlanModeDelegationInfo) {
   const sandboxSection = sandbox ? `${buildSandboxPromptSection(sandbox)}\n\n` : "";
+  const delegationLine = delegation?.scoutRegistered
+    ? "\n- For broad or parallel exploration, delegate read-only recon to the `plan-scout` subagent (single child or static `tasks` batches) without host-side options such as gate, acceptance, share, worktree, cwd, or output paths."
+    : "";
   return `${PLAN_CONTEXT_MARKER}
 # Plan Mode (Conversational)
 
@@ -41,7 +49,7 @@ You are in Plan Mode, a Codex-like collaboration mode for producing a decision-c
 
 ${sandboxSection}## Phase 1 — Ground in the environment
 
-- Explore first and ask second. Use non-mutating exploration to read files, search, inspect configuration, run read-only checks, and resolve discoverable facts.
+- Explore first and ask second. Use non-mutating exploration to read files, search, inspect configuration, run read-only checks, and resolve discoverable facts.${delegationLine}
 - Before asking the user any question, perform at least one targeted non-mutating exploration pass unless no local environment or repository is available.
 - Do not ask questions that can be answered from repository or system truth. Ask only when multiple plausible choices remain, a needed identifier/context is missing, or the ambiguity is product intent.
 

@@ -99,8 +99,23 @@ import {
 } from "./srt-sandbox.js";
 import { preflightSavedPlanImplementation, savedPlanBlocksNewWorkflow } from "./saved-plan-preflight.js";
 import {
+  clearReadOnlyAgentVerificationCache,
+  createPlanScoutManager,
+  createPreflightResolver,
+  decideDelegationAdmission,
+  loadSubagentPreflight,
+  parentReadOnlyToolNames,
+  type PlanScoutManager,
+  type PreflightResolver,
+  readOnlyToolUniverse,
+  readAgentDefinitionFile,
+  verifyReadOnlyAgent,
+} from "./plan-scout.js";
+import {
   awaitPlanModeSettingsWrites,
   configuredImplementationPlanRetention,
+  configuredPlanAdmitWorkflowScripts,
+  configuredPlanAdmittedAgents,
   configuredPlanModeToggleShortcut,
   configuredPlanOutputDir,
   configuredPlanSandbox,
@@ -269,6 +284,33 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   // Plan-mode bash calls and plan-output write/edit calls keyed by tool call id, used to report
   // Markdown drafts the call created or modified in the plan output directory.
   const trackedPlanCalls = new Map<string, TrackedPlanCall>();
+  // pi-subagents integration: the plan-scout runtime agent and its preflight resolver. The
+  // preflight module loads lazily (two-tier import) so a missing pi-subagents only degrades
+  // delegation admission, never the Plan workflow itself.
+  let subagentPreflightResolver: PreflightResolver | undefined | null = null;
+  const getSubagentPreflightResolver = async (): Promise<PreflightResolver | undefined> => {
+    if (subagentPreflightResolver !== null) return subagentPreflightResolver;
+    const preflight = await loadSubagentPreflight();
+    subagentPreflightResolver = createPreflightResolver(preflight);
+    return subagentPreflightResolver;
+  };
+  const planScout: PlanScoutManager = createPlanScoutManager({
+    events: pi.events,
+    cwd: () => currentSessionContext?.cwd ?? process.cwd(),
+    preflightLoader: getSubagentPreflightResolver,
+  });
+
+  // Per-agent verdict for delegation admission: plan-scout (registration) and planAdmittedAgents
+  // are decided by the caller; every other agent must verify read-only through the pi-subagents
+  // preflight contract plus definition-file guards.
+  const admitDelegatedAgent = async (agent: string, cwd: string): Promise<boolean> => {
+    const resolver = await getSubagentPreflightResolver();
+    if (!resolver) return false;
+    return verifyReadOnlyAgent(agent, cwd, readOnlyToolUniverse(parentReadOnlyToolNames(safeGetAllTools())), {
+      resolveContract: resolver,
+      readAgentFile: readAgentDefinitionFile,
+    });
+  };
   const implementationRetention = createImplementationRetentionCoordinator();
   const finalizationRequest = createFinalizationRequestCoordinator();
   const persistState = () => pi.appendEntry<PlanModeState>(STATE_ENTRY_TYPE, state);
@@ -582,6 +624,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     if (generation !== menuGeneration || menuController.signal.aborted) return;
     initializePlanModeShortcut();
     startPlanModeSettingsWatch(generation);
+    void planScout.ensure();
     if (!installRestoredState(restoredState, ctx)) return;
     implementationRetention.restore(state.activeImplementation);
     updateUi(ctx);
@@ -657,6 +700,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
   pi.on("session_shutdown", async (_event, ctx) => {
     cancelDeferredFreshImplementation();
+    planScout.dispose();
     const shutdownSession = ctx.sessionManager;
     const runtimeApplication =
       activeImplementationRuntimeApplication?.sessionManager === shutdownSession &&
@@ -781,15 +825,36 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         reason: planModeAvailabilityBlockReason(availability, event.toolName, allowedToolNames.has(event.toolName)),
       };
     }
+    // Read-only delegation through pi-subagents is admitted per call (never persisted into the
+    // workflow allowlist): capabilities listings, plan-scout, planAdmittedAgents, and verified
+    // read-only agents without host-side call parameters.
+    if (event.toolName === "subagent") {
+      const admission = await decideDelegationAdmission(event.input, {
+        settings: {
+          planAdmittedAgents: configuredPlanAdmittedAgents(settings),
+          planAdmitWorkflowScripts: configuredPlanAdmitWorkflowScripts(settings),
+        },
+        scoutRegistered: planScout.status().status === "registered",
+        admitAgent: (agent) => admitDelegatedAgent(agent, ctx.cwd ?? process.cwd()),
+      });
+      if (admission.admit) {
+        trackPlanCall(event.toolCallId);
+        return;
+      }
+    }
     if (
       !allowedToolNames.has(event.toolName) &&
       !admitLateActivatedPlanTool(event.toolName, ctx)
     ) {
+      const guidance =
+        event.toolName === "subagent"
+          ? " Read-only delegation is auto-admitted for plan-scout and verified read-only agents (single-child or static batches without host-side parameters); add trusted agents to planAdmittedAgents; script workflows require planAdmitWorkflowScripts."
+          : "";
       return {
         block: true,
         reason: workflowDesiredToolNames().has(event.toolName)
           ? `Plan mode blocks tool '${event.toolName}' because it was not available when the active Plan workflow froze its tool policy. Exit Plan mode, then start again after the tool is active.`
-          : `Plan mode blocks tool '${event.toolName}' because it is not selected by the Plan policy. Exit Plan mode, then enable it with /plan tools or defaultPlanTools before starting again.`,
+          : `Plan mode blocks tool '${event.toolName}' because it is not selected by the Plan policy. Exit Plan mode, then enable it with /plan tools or defaultPlanTools before starting again.${guidance}`,
       };
     }
     if (event.toolName === "bash") {
@@ -858,6 +923,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
             result.messages,
             state.enabled ? "plan" : "normal",
             state.enabled ? workflowPromptSandboxInfo() : undefined,
+            state.enabled ? { scoutRegistered: planScout.status().status === "registered" } : undefined,
           )
         : result.messages;
     return { messages: messages as typeof event.messages };
@@ -1037,6 +1103,10 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       };
       beginWorkflowToolPolicy();
       applyPlanThinkingLevel();
+      // Each new Plan workflow re-checks the plan-scout registration (retry after failures,
+      // dispose on a newly configured name collision) and starts with fresh agent verdicts.
+      clearReadOnlyAgentVerificationCache();
+      void planScout.ensure();
       persistState();
       updateUi(ctx);
       // The workflow started from this session's live state; a first prompt after /new must not
@@ -1202,6 +1272,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       mode,
       Date.now(),
       mode === "plan" ? workflowPromptSandboxInfo() : undefined,
+      mode === "plan" ? { scoutRegistered: planScout.status().status === "registered" } : undefined,
     );
     try {
       pi.sendMessage(message, { triggerTurn: false });
@@ -1534,9 +1605,30 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       `Plan output directory: ${outputDir}${existsSync(outputDir) ? "" : " (missing; Plan start creates it)"}`,
       `Sandbox write paths: ${profile.allowWrite.join(", ")} + a private per-workflow scratch TMPDIR`,
       `Sandbox network domains: ${profile.allowedDomains.length > 0 ? profile.allowedDomains.join(", ") : "none (all denied)"}`,
+      ...planScoutDoctorLines(),
     ];
     if (!diagnosis.ok) lines.push("Run /plan start to receive the agent setup guide after fixing the environment.");
     ctx.ui.notify(lines.join("\n"), diagnosis.ok ? "info" : "warning");
+  }
+
+  /** pi-subagents delegation diagnosis for `/plan doctor`. */
+  function planScoutDoctorLines() {
+    const status = planScout.status();
+    const scoutLine =
+      status.status === "registered"
+        ? "Delegation: plan-scout registered (read-only tools: read, grep, find, ls)"
+        : status.status === "collision"
+          ? `Delegation: plan-scout NOT registered — name collision (${safeTerminalText(status.detail)})`
+          : status.status === "unavailable"
+            ? `Delegation: plan-scout unavailable — ${safeTerminalText(status.reason)}`
+            : "Delegation: plan-scout not registered yet (starts with the next session or Plan workflow)";
+    const verificationLine = status.preflightAvailable
+      ? "Delegation verification: verified via pi-subagents preflight"
+      : "Delegation verification: degraded — plan-scout and planAdmittedAgents only (pi-subagents preflight unavailable; install or update npm:pi-subagents)";
+    const scriptsLine = configuredPlanAdmitWorkflowScripts(settings)
+      ? "Delegation workflow scripts: ADMITTED (planAdmitWorkflowScripts on — script workflows run with full trust)"
+      : "Delegation workflow scripts: blocked (planAdmitWorkflowScripts off)";
+    return [scoutLine, verificationLine, scriptsLine];
   }
 
   async function showStoredPlanForCurrentState(ctx: ExtensionContext) {

@@ -2,6 +2,19 @@
 
 [Back to README](../README.md#-commands)
 
+## Read-only delegation (plan-scout)
+
+During an active Plan workflow, `subagent` tool calls are auto-admitted per call — without entering the Plan tool allowlist — when they are provably read-only:
+
+- **Shapes**: a single child (`{agent, task}`), a static `tasks` batch, or a `chain` whose steps are `{agent, task, as?}` or `{parallel: [...]}`; `action: "capabilities"` listings are always fine.
+- **Parameter whitelist**: only `agent`, `task`, `tasks`, `chain`, `context` (`fresh`/`fork`), `model`, `thinking`, `async`, `timeoutMs`/`maxRuntimeMs`, `toolBudget`, `includeProgress`, `chatProgress`, `artifacts`, `skill`, `output: false`, and `acceptance: false`. Any host-side parameter — `gate`, `acceptance` (other than `false`), `share`, `worktree`, `isolation`, `sessionDir`, `machine`, `cwd`, `fast`, `outputSchema`, `outputMode`, `agentContract`, `extensionBindings`, and friends — denies the exemption because those execute in the Pi host process (spawn, file writes, Gist upload, git worktrees, remote machines), not in the read-only child.
+- **Agents**: every referenced agent must pass one of three paths — the built-in `plan-scout` (registered at session start with the read-only tools `read`/`grep`/`find`/`ls`; a same-named configured agent disables the registration, reported by `/plan doctor`), your `planAdmittedAgents` list, or verified read-only admission: the pi-subagents preflight contract must resolve the agent with an explicit tool allowlist contained in the read-only universe (`read`/`grep`/`find`/`ls`, `contact_supervisor`/`intercom`/`structured_output`, and parent tools annotated `readOnlyHint` without `destructiveHint`), no configured child extensions or tool extension paths, and a definition file free of `runner`/`machine`/`defaultAcceptance`/`acceptance`/`extensions`/`subagentOnlyExtensions` directives and absolute/`..` `output` paths.
+- **Workflow scripts**: `workflow: true` spawns arbitrary agents with host-side `runs.run` options, so static analysis cannot bound it; scripts are admitted only when you set `planAdmitWorkflowScripts` (full trust).
+
+Admitted calls run without touching the frozen workflow allowlist; every other `subagent` call keeps the ordinary Plan policy block and appends guidance about the admitted shapes.
+Child sessions run outside the srt sandbox by design: their tool allowlists are the boundary (plan-scout has no shell or file-writing tools), and a child's `read` is not bound by the parent's `planSandbox.denyRead` — consistent with the parent's in-process `read` tool.
+When pi-subagents (or its preflight export) is unavailable, `/plan doctor` reports the degraded mode: only `plan-scout` and `planAdmittedAgents` calls are admitted.
+
 ## Start and choose tools
 
 `/plan start` probes the srt sandbox first: a healthy probe activates Plan mode without sending a model message, while a failing probe refuses to start and injects an agent setup guide (install commands included) instead.

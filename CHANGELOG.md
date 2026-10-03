@@ -1,5 +1,16 @@
 # @narumitw/pi-plan-mode
 
+## 0.61.0 (fork)
+
+### Minor Changes
+
+- Ship `plan-scout`, a read-only reconnaissance subagent registered through pi-subagents at session start (tools `read`/`grep`/`find`/`ls`, replace-mode system prompt with a file:line evidence discipline, thinking `low`, no default output path). A preflight resolve of the name blocks registration when a configured agent already uses it — pi-subagents throws on every agent discovery otherwise — and `/plan doctor` reports the collision instead.
+- Auto-admit read-only `subagent` calls per call during Plan mode (never persisted into the workflow allowlist): `action: "capabilities"` listings, single-child `{agent, task}` calls, static `tasks` batches, and `chain` steps (`{agent, task, as?}` or `{parallel}`), under a strict parameter whitelist. Host-side parameters — `gate`, `acceptance` (other than `false`), `share`, `worktree`, `isolation`, `sessionDir`, `machine`, `cwd`, `fast`, `outputSchema`, `outputMode`, `agentContract`, `extensionBindings`, and any output path — deny the exemption because they execute in the Pi host process, not in the read-only child.
+- Every referenced agent must pass one of three admission paths: the registered `plan-scout`, the new `planAdmittedAgents` setting (trusted names; the parameter whitelist still applies), or verified read-only admission through the pi-subagents preflight contract — an explicit, entirely read-only tool allowlist (readers, `contact_supervisor`/`intercom`/`structured_output`, and parent tools annotated `readOnlyHint` without `destructiveHint`), no configured child extensions or tool extension paths, and a definition file free of `runner`/`machine`/`defaultAcceptance`/`acceptance`/`extensions`/`subagentOnlyExtensions` directives and absolute/`..` `output` paths.
+- `workflow: true` script delegation is admitted only with the new `planAdmitWorkflowScripts` setting (default off): a script can spawn arbitrary agents and carry host-side `runs.run` options, so admission is a full trust decision.
+- The Plan mode contract adds a Phase 1 delegation line while plan-scout is registered; `/plan doctor` reports the scout status, the verification mode (verified via preflight vs degraded to plan-scout + planAdmittedAgents), and the script admission state.
+- Declare the optional `pi-subagents` peer dependency; without it, delegation admission degrades gracefully and everything else keeps working.
+
 ## 0.60.0 (fork)
 
 ### Minor Changes

@@ -1,4 +1,4 @@
-import { buildPlanModePrompt, type PlanModePromptSandboxInfo } from "./prompt.js";
+import { buildPlanModePrompt, type PlanModeDelegationInfo, type PlanModePromptSandboxInfo } from "./prompt.js";
 
 export const MODE_CONTRACT_MESSAGE_TYPE = "plan-mode-transition";
 export const MODE_CONTRACT_VERSION = 1;
@@ -19,17 +19,26 @@ interface ContractMessage {
   details?: unknown;
 }
 
-export function modeContractContent(mode: PlanModeContract, sandbox?: PlanModePromptSandboxInfo) {
+export function modeContractContent(
+  mode: PlanModeContract,
+  sandbox?: PlanModePromptSandboxInfo,
+  delegation?: PlanModeDelegationInfo,
+) {
   return mode === "plan"
-    ? `${PLAN_CONTRACT_MARKER}\n${buildPlanModePrompt(sandbox)}`
+    ? `${PLAN_CONTRACT_MARKER}\n${buildPlanModePrompt(sandbox, delegation)}`
     : NORMAL_CONTRACT;
 }
 
-export function createModeContractMessage(mode: PlanModeContract, timestamp = Date.now(), sandbox?: PlanModePromptSandboxInfo) {
+export function createModeContractMessage(
+  mode: PlanModeContract,
+  timestamp = Date.now(),
+  sandbox?: PlanModePromptSandboxInfo,
+  delegation?: PlanModeDelegationInfo,
+) {
   return {
     role: "custom" as const,
     customType: MODE_CONTRACT_MESSAGE_TYPE,
-    content: modeContractContent(mode, sandbox),
+    content: modeContractContent(mode, sandbox, delegation),
     display: false,
     details: { version: MODE_CONTRACT_VERSION, mode },
     timestamp,
@@ -71,6 +80,7 @@ export function reconcileModeContract(
   messages: unknown[],
   expected: PlanModeContract,
   sandbox?: PlanModePromptSandboxInfo,
+  delegation?: PlanModeDelegationInfo,
 ) {
   const latest = latestModeContract(messages);
   if (latest?.mode === expected) return messages;
@@ -79,7 +89,7 @@ export function reconcileModeContract(
   const insertionIndex = latestContractIndex >= 0 ? latestContractIndex + 1 : leadingSummaryBoundary(messages);
   return [
     ...messages.slice(0, insertionIndex),
-    createModeContractMessage(expected, 0, expected === "plan" ? sandbox : undefined),
+    createModeContractMessage(expected, 0, expected === "plan" ? sandbox : undefined, expected === "plan" ? delegation : undefined),
     ...messages.slice(insertionIndex),
   ];
 }
