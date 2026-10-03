@@ -3,7 +3,7 @@
 > **Provenance.** This extension began as a fork of [@narumitw/pi-plan-mode](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-plan-mode) (MIT) and now evolves independently as **pi-plan-vanguard**.
 > It replaces the reviewed shell-command allowlists with **the Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**: every Plan-mode `bash` call is wrapped in an OS-level sandbox (Seatbelt on macOS, bubblewrap on Linux, srt-win on Windows), so arbitrary exploration — pipes, redirects, subshells, scripts — runs freely while writes stay limited to the plan output directory plus a private per-workflow scratch `TMPDIR`, and the network is deny-by-default. Completed plans persist as Markdown under `plans/` and echo in the TUI.
 >
-> Install: `pi install git:github.com/hao3039032/pi-plan-mode` (remove `npm:@narumitw/pi-plan-mode` first). Then install the sandbox: `npm install -g @anthropic-ai/sandbox-runtime` plus its [platform dependencies](#-security-and-privacy).
+> Install: `pi install git:github.com/hao3039032/pi-plan-vanguard` (remove `npm:@narumitw/pi-plan-mode` first; if you installed the pre-rename `git:github.com/hao3039032/pi-plan-mode`, remove that too). Then install the sandbox: `npm install -g @anthropic-ai/sandbox-runtime` plus its [platform dependencies](#-security-and-privacy).
 >
 > Sync with upstream: clone `narumiruna/pi-extensions`, re-apply the local commits on top of it, run the plan-mode tests there, then `git subtree split --prefix=packages/pi-plan-mode` and merge the result here. Tests in `test/` rely on the upstream monorepo harness.
 
@@ -33,13 +33,13 @@ This release requires Pi 0.80.6 or newer.
 Native PowerShell tool support requires Pi 0.84.3 or newer on Windows; earlier Pi versions omit that optional tool and retain the existing Plan policy.
 
 ```bash
-pi install git:github.com/hao3039032/pi-plan-mode
+pi install git:github.com/hao3039032/pi-plan-vanguard
 ```
 
 Try the local checkout without installing permanently:
 
 ```bash
-pi -e /path/to/pi-plan-mode
+pi -e /path/to/pi-plan-vanguard
 ```
 
 The extension loads `./src/index.ts` directly through Pi's Jiti runtime, so an unbuilt checkout works as-is.
