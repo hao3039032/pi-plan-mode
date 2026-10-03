@@ -1,7 +1,7 @@
 {
-  "name": "@hao3039032/pi-plan-mode",
-  "version": "0.61.0",
-  "description": "Fork of @narumitw/pi-plan-mode: Plan-mode exploration runs inside the Anthropic Sandbox Runtime (srt) OS sandbox; completed plans persist as Markdown in a plans/ directory with TUI echo.",
+  "name": "@hao3039032/pi-plan-vanguard",
+  "version": "0.62.0",
+  "description": "Independent evolution of pi-plan-mode: Plan mode with srt OS-sandboxed exploration, Markdown plan persistence, exposure-aware tool policy, and read-only plan-scout delegation through pi-subagents. Credits @narumitw/pi-plan-mode for the original design.",
   "type": "module",
   "license": "MIT",
   "private": true,
@@ -10,6 +10,7 @@
     "pi-extension",
     "pi",
     "plan-mode",
+    "pi-plan-vanguard",
     "planning"
   ],
   "pi": {

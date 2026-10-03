@@ -213,7 +213,7 @@ export interface PlanOutputDirRequest {
   frozen?: string;
   /** Directories the output dir may neither be at/under nor contain (agent dir, srt profile dir). */
   protectedDirs: readonly string[];
-  /** Files the output dir may neither be nor contain (pi-plan-mode settings). */
+  /** Files the output dir may neither be nor contain (pi-plan-vanguard settings). */
   protectedFiles: readonly string[];
 }
 

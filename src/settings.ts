@@ -6,8 +6,9 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type ImplementationModelOverride, isPendingImplementationModelIdentifier } from "./implementation-models.js";
 
-export const PLAN_MODE_SETTINGS_FILE = "pi-plan-mode.json";
-const LEGACY_PLAN_MODE_SETTINGS_FILE = "plan-mode.json";
+export const PLAN_MODE_SETTINGS_FILE = "pi-plan-vanguard.json";
+/** Former canonical settings filenames, still read (newest first) and migrated on the next explicit save. */
+export const LEGACY_PLAN_MODE_SETTINGS_FILES = ["pi-plan-mode.json", "plan-mode.json"] as const;
 const MAX_SETTINGS_BYTES = 64 * 1024;
 export const PLAN_MODE_THINKING_LEVELS = [
   "inherit",
@@ -114,7 +115,7 @@ export interface PlanModeSettingsPatch {
 }
 export interface UpdatePlanModeSettingsOptions {
   settingsPath?: string;
-  legacySettingsPath?: string;
+  legacySettingsPaths?: string[];
   signal?: AbortSignal;
   beforeRename?: (temporaryPath: string, settingsPath: string) => Promise<void>;
 }
@@ -135,8 +136,8 @@ export function planModeSettingsPath() {
   return join(getAgentDir(), PLAN_MODE_SETTINGS_FILE);
 }
 
-export function legacyPlanModeSettingsPath() {
-  return join(getAgentDir(), LEGACY_PLAN_MODE_SETTINGS_FILE);
+export function legacyPlanModeSettingsPaths() {
+  return LEGACY_PLAN_MODE_SETTINGS_FILES.map((file) => join(getAgentDir(), file));
 }
 
 export function normalizePlanModeSettings(value: unknown): PlanModeSettings | undefined {
@@ -314,25 +315,33 @@ export async function readPlanModeSettings(settingsPath?: string): Promise<PlanM
   const canonicalPath = planModeSettingsPath();
   await awaitPlanModeSettingsWrites(canonicalPath);
   const canonical = await readSettingsSnapshot(canonicalPath);
-  const legacyPath = legacyPlanModeSettingsPath();
   if (canonical.result.kind !== "missing") {
-    return (await pathExists(legacyPath))
+    // Any surviving legacy file is ignored; say so instead of silently shadowing it.
+    const shadowed: string[] = [];
+    for (const legacyPath of legacyPlanModeSettingsPaths()) {
+      if (await pathExists(legacyPath)) shadowed.push(basename(legacyPath));
+    }
+    return shadowed.length > 0
       ? {
           ...canonical.result,
-          notice: `${LEGACY_PLAN_MODE_SETTINGS_FILE} ignored because ${PLAN_MODE_SETTINGS_FILE} takes precedence.`,
+          notice: `${shadowed.join(", ")} ignored because ${PLAN_MODE_SETTINGS_FILE} takes precedence.`,
         }
       : canonical.result;
   }
 
-  const legacy = await readSettingsSnapshot(legacyPath);
-  const raced = await readSettingsSnapshot(canonicalPath);
-  if (raced.result.kind !== "missing") return raced.result;
-  return legacy.result.kind === "loaded"
-    ? {
-        ...legacy.result,
-        notice: `Using legacy ${LEGACY_PLAN_MODE_SETTINGS_FILE}; rename it to ${PLAN_MODE_SETTINGS_FILE}. The legacy file was not modified.`,
-      }
-    : legacy.result;
+  for (const legacyPath of legacyPlanModeSettingsPaths()) {
+    const legacy = await readSettingsSnapshot(legacyPath);
+    if (legacy.result.kind === "missing") continue;
+    const raced = await readSettingsSnapshot(canonicalPath);
+    if (raced.result.kind !== "missing") return raced.result;
+    return legacy.result.kind === "loaded"
+      ? {
+          ...legacy.result,
+          notice: `Using legacy ${basename(legacyPath)}; rename it to ${PLAN_MODE_SETTINGS_FILE}. The legacy file was not modified.`,
+        }
+      : legacy.result;
+  }
+  return { kind: "missing" };
 }
 
 export function updatePlanModeSettings(
@@ -340,11 +349,11 @@ export function updatePlanModeSettings(
   options: UpdatePlanModeSettingsOptions = {},
 ): Promise<PlanModeSettings> {
   const settingsPath = options.settingsPath ?? planModeSettingsPath();
-  const legacySettingsPath =
-    options.legacySettingsPath ?? (options.settingsPath ? undefined : legacyPlanModeSettingsPath());
+  const legacySettingsPaths =
+    options.legacySettingsPaths ?? (options.settingsPath ? [] : legacyPlanModeSettingsPaths());
   return enqueueMutation(settingsPath, async () => {
     options.signal?.throwIfAborted();
-    const current = await readSettingsDocumentForUpdate(settingsPath, legacySettingsPath);
+    const current = await readSettingsDocumentForUpdate(settingsPath, legacySettingsPaths);
     const updated: SettingsDocument = { ...current };
     if (patch.thinkingLevel !== undefined) updated.thinkingLevel = patch.thinkingLevel;
     if (patch.defaultPlanTools === null) delete updated.defaultPlanTools;
@@ -416,25 +425,26 @@ function enqueueMutation<T>(settingsPath: string, mutation: () => Promise<T>): P
 
 async function readSettingsDocumentForUpdate(
   settingsPath: string,
-  legacySettingsPath: string | undefined,
+  legacySettingsPaths: readonly string[],
 ): Promise<SettingsDocument> {
   const canonical = await readSettingsSnapshot(settingsPath);
   if (canonical.result.kind === "loaded") return canonical.document ?? {};
   if (canonical.result.kind === "invalid") {
     throw invalidSettingsError(settingsPath, canonical.result.reason);
   }
-  if (!legacySettingsPath) return {};
-
-  const legacy = await readSettingsSnapshot(legacySettingsPath);
-  const raced = await readSettingsSnapshot(settingsPath);
-  if (raced.result.kind === "loaded") return raced.document ?? {};
-  if (raced.result.kind === "invalid") {
-    throw invalidSettingsError(settingsPath, raced.result.reason);
+  for (const legacyPath of legacySettingsPaths) {
+    const legacy = await readSettingsSnapshot(legacyPath);
+    const raced = await readSettingsSnapshot(settingsPath);
+    if (raced.result.kind === "loaded") return raced.document ?? {};
+    if (raced.result.kind === "invalid") {
+      throw invalidSettingsError(settingsPath, raced.result.reason);
+    }
+    if (legacy.result.kind === "invalid") {
+      throw invalidSettingsError(legacyPath, legacy.result.reason);
+    }
+    if (legacy.result.kind === "loaded") return legacy.document ?? {};
   }
-  if (legacy.result.kind === "invalid") {
-    throw invalidSettingsError(legacySettingsPath, legacy.result.reason);
-  }
-  return legacy.document ?? {};
+  return {};
 }
 
 async function readSettingsSnapshot(settingsPath: string): Promise<SettingsSnapshot> {
@@ -532,7 +542,7 @@ async function pathExists(path: string) {
 }
 
 function invalidSettingsError(settingsPath: string, reason: string) {
-  return new Error(`pi-plan-mode settings at ${settingsPath} are invalid: ${reason}`);
+  return new Error(`pi-plan-vanguard settings at ${settingsPath} are invalid: ${reason}`);
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

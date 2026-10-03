@@ -1,13 +1,13 @@
-# 🧭 pi-plan-mode — Plan in an OS Sandbox Before Pi Edits Code
+# 🧭 pi-plan-vanguard — Plan in an OS Sandbox Before Pi Edits Code
 
-> **Fork note.** This is a fork of [@narumitw/pi-plan-mode](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-plan-mode) (MIT), split from the upstream monorepo with its history.
-> This fork replaces the reviewed shell-command allowlists with **the Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**: every Plan-mode `bash` call is wrapped in an OS-level sandbox (Seatbelt on macOS, bubblewrap on Linux, srt-win on Windows), so arbitrary exploration — pipes, redirects, subshells, scripts — runs freely while writes stay limited to the plan output directory plus a private per-workflow scratch `TMPDIR`, and the network is deny-by-default. Completed plans persist as Markdown under `plans/` and echo in the TUI.
+> **Provenance.** This extension began as a fork of [@narumitw/pi-plan-mode](https://github.com/narumiruna/pi-extensions/tree/main/packages/pi-plan-mode) (MIT) and now evolves independently as **pi-plan-vanguard**.
+> It replaces the reviewed shell-command allowlists with **the Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**: every Plan-mode `bash` call is wrapped in an OS-level sandbox (Seatbelt on macOS, bubblewrap on Linux, srt-win on Windows), so arbitrary exploration — pipes, redirects, subshells, scripts — runs freely while writes stay limited to the plan output directory plus a private per-workflow scratch `TMPDIR`, and the network is deny-by-default. Completed plans persist as Markdown under `plans/` and echo in the TUI.
 >
 > Install: `pi install git:github.com/hao3039032/pi-plan-mode` (remove `npm:@narumitw/pi-plan-mode` first). Then install the sandbox: `npm install -g @anthropic-ai/sandbox-runtime` plus its [platform dependencies](#-security-and-privacy).
 >
-> Sync with upstream: clone `narumiruna/pi-extensions`, re-apply the fork commits on top of it, run the plan-mode tests there, then `git subtree split --prefix=packages/pi-plan-mode` and merge the result here. Tests in `test/` rely on the upstream monorepo harness.
+> Sync with upstream: clone `narumiruna/pi-extensions`, re-apply the local commits on top of it, run the plan-mode tests there, then `git subtree split --prefix=packages/pi-plan-mode` and merge the result here. Tests in `test/` rely on the upstream monorepo harness.
 
-[![npm](https://img.shields.io/npm/v/@narumitw/pi-plan-mode)](https://www.npmjs.com/package/@narumitw/pi-plan-mode) [![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 Use a Codex-like `/plan` mode to explore a codebase inside an OS sandbox, resolve important questions, and approve an implementation-ready plan before Pi edits files.
 
@@ -33,23 +33,16 @@ This release requires Pi 0.80.6 or newer.
 Native PowerShell tool support requires Pi 0.84.3 or newer on Windows; earlier Pi versions omit that optional tool and retain the existing Plan policy.
 
 ```bash
-pi install npm:@narumitw/pi-plan-mode
+pi install git:github.com/hao3039032/pi-plan-mode
 ```
 
-Try without installing permanently:
+Try the local checkout without installing permanently:
 
 ```bash
-pi -e npm:@narumitw/pi-plan-mode
+pi -e /path/to/pi-plan-mode
 ```
 
-Build and try this package locally from the repository root:
-
-```bash
-npm --workspace @narumitw/pi-plan-mode run build
-pi -e ./packages/pi-plan-mode
-```
-
-The package declares `dist/index.ts`, so build an unbuilt local checkout before Pi loads the package directory.
+The extension loads `./src/index.ts` directly through Pi's Jiti runtime, so an unbuilt checkout works as-is.
 Install only from sources you trust because Pi extensions run with Pi's permissions.
 
 ## 🚀 Quick start
@@ -127,7 +120,7 @@ See [command workflows](./docs/command-workflows.md) for tool selection, busy-st
 
 Plan-mode exploration is enforced by the **Anthropic Sandbox Runtime ([srt](https://github.com/anthropics/sandbox-runtime))**, an OS-level sandbox — the same layer Claude Code uses — rather than by command-text allowlists:
 
-- **Filesystem**: reads are allowed everywhere except denied secret paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`, plus your `planSandbox.denyRead` entries); writes are allowed only in the plan output directory (created at Plan start if missing) and a private per-workflow scratch directory exported to commands as `TMPDIR` (`planSandbox.allowWrite` adds more). `/tmp` itself is read-only. The srt profile files live in `<agent dir>/srt` (mode 0700, files 0600); the whole pi agent directory and the pi-plan-mode settings files are always in the profile's `denyWrite` — which takes precedence over `allowWrite` — so a sandboxed command can never rewrite its own sandbox, even with a widened `allowWrite`. The scratch directory and profile are removed when the workflow ends.
+- **Filesystem**: reads are allowed everywhere except denied secret paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`, plus your `planSandbox.denyRead` entries); writes are allowed only in the plan output directory (created at Plan start if missing) and a private per-workflow scratch directory exported to commands as `TMPDIR` (`planSandbox.allowWrite` adds more). `/tmp` itself is read-only. The srt profile files live in `<agent dir>/srt` (mode 0700, files 0600); the whole pi agent directory and the pi-plan-vanguard settings files (including every legacy filename still holding a configuration) are always in the profile's `denyWrite` — which takes precedence over `allowWrite` — so a sandboxed command can never rewrite its own sandbox, even with a widened `allowWrite`. The scratch directory and profile are removed when the workflow ends.
 - **Network**: denied for every domain by default; allow specific hosts with `planSandbox.allowedDomains` (wildcards like `*.npmjs.org`).
 - **Shell**: every `bash` call is rewritten to `CLAUDE_CODE_TMPDIR='<scratch>' srt -s <profile> -c '<command>'` in the `tool_call` hook (srt hands `CLAUDE_CODE_TMPDIR` to the command as `TMPDIR`) — pipes, redirects, subshells, variables, and arbitrary commands all run inside the sandbox. `EPERM`/`Operation not permitted`/proxy denials are the boundary; annotated results tell the agent not to retry with different syntax.
 - **Tools**: built-in `write` and `edit` are allowed only when active and only for targets that resolve (after `..` normalization and symlink resolution) inside the plan output directory — everything else, extension tools that override those names, other unknown built-ins, and `powershell` stay blocked (v1 sandboxes the `bash` tool only); in-process readers (`read`, `grep`, `find`, `ls`) stay allowed; explicitly selected non-built-in tools run at user risk, as upstream.
@@ -341,8 +334,9 @@ Guaranteed coexistence with Goal requires `@narumitw/pi-goal` `0.53.0` or newer 
 
 ## ⚙️ Settings
 
-Run `/plan settings`, open **Settings** from an inactive `/plan` menu, or edit `<getAgentDir()>/pi-plan-mode.json` (normally `~/.pi/agent/pi-plan-mode.json`).
+Run `/plan settings`, open **Settings** from an inactive `/plan` menu, or edit `<getAgentDir()>/pi-plan-vanguard.json` (normally `~/.pi/agent/pi-plan-vanguard.json`).
 The optional file is read at session start and watched for changes; only an explicit save creates it.
+Earlier filenames — `pi-plan-mode.json` and `plan-mode.json` — remain readable legacy files (newest wins); the first explicit Settings save writes the new canonical file from the complete legacy document and never modifies the old one.
 
 ```json
 {
@@ -367,7 +361,7 @@ The optional file is read at session start and watched for changes; only an expl
 
 By default, Plan mode inherits thinking, allows active safe built-ins, uses the planning model and thinking level for fresh implementation, exports explicit copies to `PLAN.md`, and relies on ordinary conversation history after implementation starts.
 `planAdmittedAgents` (optional list) names subagents that Plan-mode delegation calls may run without per-agent verification, and `planAdmitWorkflowScripts` (default `false`) admits `workflow: true` script delegation with full trust — a script can spawn any agent and carry host-side `gate`/`output` effects, so leave it off unless you accept that.
-`planOutputDir` (default `plans`) is where accepted plans are persisted and made sandbox-writable (Plan start creates it if missing; a relative value must be a real, non-symlinked directory inside the working directory, and the resolved directory is frozen for the whole workflow); `planSandbox` extends the built-in profile — the plan output directory and the private scratch `TMPDIR` are always writable, the srt profile directory and pi-plan-mode settings files are always write-denied, and the built-in secret deny-read list always applies.
+`planOutputDir` (default `plans`) is where accepted plans are persisted and made sandbox-writable (Plan start creates it if missing; a relative value must be a real, non-symlinked directory inside the working directory, and the resolved directory is frozen for the whole workflow); `planSandbox` extends the built-in profile — the plan output directory and the private scratch `TMPDIR` are always writable, the srt profile directory and the pi-plan-vanguard settings files are always write-denied, and the built-in secret deny-read list always applies.
 The shortcut is disabled unless configured; enabling, changing, or removing it takes effect after `/reload` or restarting Pi.
 Until then, the current shortcut binding stays unchanged.
 Settings saves apply to later workflows; an active implementation keeps its captured reinjection policy.

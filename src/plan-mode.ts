@@ -123,7 +123,7 @@ import {
   type ImplementationPlanRetention,
   type PlanModeSettings,
   type PlanModeSettingsPatch,
-  legacyPlanModeSettingsPath,
+  legacyPlanModeSettingsPaths,
   planModeSettingsPath,
   readPlanModeSettings,
   type UpdatePlanModeSettingsOptions,
@@ -547,7 +547,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         : ({ thinkingLevel: "inherit" } satisfies PlanModeSettings);
     if (!ctx || !showWarnings) return loadedSettings;
     if (loadedSettings.kind === "invalid") {
-      ctx.ui.notify(`pi-plan-mode settings ignored: ${loadedSettings.reason}`, "warning");
+      ctx.ui.notify(`pi-plan-vanguard settings ignored: ${loadedSettings.reason}`, "warning");
     }
     if (loadedSettings.notice) {
       ctx.ui.notify(loadedSettings.notice, "warning");
@@ -1307,12 +1307,13 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   function planModeSettingsFiles() {
     return explicitPlanModeSettingsPath
       ? [explicitPlanModeSettingsPath]
-      : [planModeSettingsPath(), legacyPlanModeSettingsPath()];
+      : [planModeSettingsPath(), ...legacyPlanModeSettingsPaths()];
   }
 
   /**
    * Paths no Plan workflow may write: the whole pi agent dir (sessions, settings, srt profiles),
-   * the srt profile dir (which a test seam may move), and the pi-plan-mode settings files.
+   * the srt profile dir (which a test seam may move), and the pi-plan-vanguard settings files
+   * (including every legacy filename still holding a user's configuration).
    */
   function protectedPlanModePaths() {
     return { dirs: [getAgentDir(), srtProfileDir()], files: planModeSettingsFiles() };

@@ -47,7 +47,7 @@ export interface PlanModeSettingsMenuOptions {
   signal: AbortSignal;
   isCurrent(): boolean;
   settingsPath?: string;
-  legacySettingsPath?: string;
+  legacySettingsPaths?: string[];
   startupToggleShortcut?: PlanModeSettings["toggleShortcut"];
   readSettings?: (settingsPath?: string) => Promise<PlanModeSettingsLoadResult>;
   updateSettings?: (patch: PlanModeSettingsPatch, options?: UpdatePlanModeSettingsOptions) => Promise<PlanModeSettings>;
@@ -593,7 +593,7 @@ export async function showPlanModeSettings(
     try {
       const saved = await updateSettings(patch, {
         settingsPath: options.settingsPath,
-        legacySettingsPath: options.legacySettingsPath,
+        legacySettingsPaths: options.legacySettingsPaths,
         signal,
       });
       if (options.isCurrent()) options.onSaved(saved);

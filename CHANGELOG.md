@@ -1,4 +1,11 @@
-# @narumitw/pi-plan-mode
+# @hao3039032/pi-plan-vanguard
+
+## 0.62.0 (fork)
+
+### Minor Changes
+
+- Renamed the package to `@hao3039032/pi-plan-vanguard`: this extension now evolves independently of upstream `@narumitw/pi-plan-mode`, which remains credited for the original design (see the README provenance note). The `/plan` commands, helper tool names, and the `plan-scout` agent name are unchanged.
+- Settings migrate to `<agent dir>/pi-plan-vanguard.json`. The former filenames `pi-plan-mode.json` and `plan-mode.json` remain readable legacy files (newest wins), are never modified, and the first explicit Settings save writes the new canonical file from the complete legacy document — including unknown fields. All settings filenames, current and legacy, stay write-denied inside the srt sandbox and protected from Plan-mode writes. Internal srt profile/scratch file patterns keep their previous names so cleanup of files from older versions still works.
 
 ## 0.61.0 (fork)
 

@@ -309,16 +309,16 @@ test("Plan-mode settings patch implementation defaults, retention, and export fi
 });
 
 test("Plan-mode settings explicit save promotes valid legacy content without modifying it", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-settings-promote-"));
-  const settingsPath = join(directory, "pi-plan-mode.json");
-  const legacySettingsPath = join(directory, "plan-mode.json");
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-vanguard-settings-promote-"));
+  const settingsPath = join(directory, "pi-plan-vanguard.json");
+  const legacySettingsPaths = [join(directory, "pi-plan-mode.json"), join(directory, "plan-mode.json")];
   const legacy =
     '{"thinkingLevel":"low","defaultPlanTools":["read"],"implementationPlanRetention":"clear-on-start","defaultPlanExportPath":"plans/PLAN.md","future":{"kept":true}}\n';
   try {
-    await writeFile(legacySettingsPath, legacy);
-    await updatePlanModeSettings({ thinkingLevel: "high" }, { settingsPath, legacySettingsPath });
+    await writeFile(legacySettingsPaths[0] as string, legacy);
+    await updatePlanModeSettings({ thinkingLevel: "high" }, { settingsPath, legacySettingsPaths });
 
-    assert.equal(await readFile(legacySettingsPath, "utf8"), legacy);
+    assert.equal(await readFile(legacySettingsPaths[0] as string, "utf8"), legacy);
     assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
       thinkingLevel: "high",
       defaultPlanTools: ["read"],
@@ -469,10 +469,11 @@ test("Plan-mode settings abort before publication without creating the canonical
 });
 
 test("Plan-mode settings read legacy files without modifying them", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "pi-plan-mode-migration-"));
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-vanguard-migration-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = directory;
   try {
+    // Oldest legacy file alone.
     await writeFile(
       join(directory, "plan-mode.json"),
       '{"thinkingLevel":"high","planSandbox":{"allowedDomains":["api.github.com"]},"futureOption":true}',
@@ -483,38 +484,48 @@ test("Plan-mode settings read legacy files without modifying them", async () => 
       thinkingLevel: "high",
       planSandbox: { allowedDomains: ["api.github.com"] },
     });
-    assert.match(loaded.notice ?? "", /using legacy/i);
+    assert.match(loaded.notice ?? "", /using legacy plan-mode\.json/i);
     assert.deepEqual(JSON.parse(await readFile(join(directory, "plan-mode.json"), "utf8")), {
       thinkingLevel: "high",
       planSandbox: { allowedDomains: ["api.github.com"] },
       futureOption: true,
     });
-    await assert.rejects(access(join(directory, "pi-plan-mode.json")));
+    await assert.rejects(access(join(directory, "pi-plan-vanguard.json")));
 
-    await writeFile(join(directory, "plan-mode.json"), '{"thinkingLevel":"low"}');
-    await writeFile(join(directory, "pi-plan-mode.json"), '{"thinkingLevel":"medium"}');
+    // The newer legacy filename wins over the oldest one.
+    await writeFile(join(directory, "pi-plan-mode.json"), '{"thinkingLevel":"low"}');
+    const newerLegacy = await readPlanModeSettings();
+    assert.deepEqual(newerLegacy.kind === "loaded" ? newerLegacy.settings : undefined, {
+      thinkingLevel: "low",
+    });
+    assert.match(newerLegacy.notice ?? "", /using legacy pi-plan-mode\.json/i);
+
+    // The new canonical wins over both legacy files.
+    await writeFile(join(directory, "pi-plan-vanguard.json"), '{"thinkingLevel":"medium"}');
     const preferred = await readPlanModeSettings();
     assert.deepEqual(preferred.kind === "loaded" ? preferred.settings : undefined, {
       thinkingLevel: "medium",
     });
     assert.match(preferred.notice ?? "", /ignored/i);
+    assert.match(preferred.notice ?? "", /pi-plan-mode\.json/u);
+    assert.match(preferred.notice ?? "", /plan-mode\.json/u);
 
-    await writeFile(join(directory, "pi-plan-mode.json"), "invalid");
+    await writeFile(join(directory, "pi-plan-vanguard.json"), "invalid");
     const invalid = await readPlanModeSettings();
     assert.equal(invalid.kind, "invalid");
-    assert.equal(await readFile(join(directory, "plan-mode.json"), "utf8"), '{"thinkingLevel":"low"}');
+    assert.equal(await readFile(join(directory, "pi-plan-mode.json"), "utf8"), '{"thinkingLevel":"low"}');
 
-    await unlink(join(directory, "pi-plan-mode.json"));
-    await writeFile(join(directory, "plan-mode.json"), "invalid");
+    await unlink(join(directory, "pi-plan-vanguard.json"));
+    await writeFile(join(directory, "pi-plan-mode.json"), "invalid");
     assert.equal((await readPlanModeSettings()).kind, "invalid");
-    await assert.rejects(access(join(directory, "pi-plan-mode.json")));
+    await assert.rejects(access(join(directory, "pi-plan-vanguard.json")));
 
-    await writeFile(join(directory, "plan-mode.json"), '{"thinkingLevel":"high"}');
-    await symlink("missing-target", join(directory, "pi-plan-mode.json"));
+    await writeFile(join(directory, "pi-plan-mode.json"), '{"thinkingLevel":"high"}');
+    await symlink("missing-target", join(directory, "pi-plan-vanguard.json"));
     const linked = await readPlanModeSettings();
     assert.equal(linked.kind, "invalid");
     assert.match(linked.kind === "invalid" ? linked.reason : "", /regular file/i);
-    assert.equal(await readFile(join(directory, "plan-mode.json"), "utf8"), '{"thinkingLevel":"high"}');
+    assert.equal(await readFile(join(directory, "pi-plan-mode.json"), "utf8"), '{"thinkingLevel":"high"}');
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
