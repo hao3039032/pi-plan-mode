@@ -17,6 +17,7 @@ Persistent defaults belong in [Settings](./settings.md).
 The TUI selector supports fuzzy search and paging; RPC shows the unfiltered list.
 Blocked, inactive, or not-yet-registered tools remain distinguishable, and selected names awaiting metadata stay selected for first-request resolution.
 Reopen the selector to refresh newly registered tools.
+On Pi 1.0's tool exposures, registered codemode or deferred tools can be selected without activation and run through other tools' nested calls, while direct and model-only tools must be active; every nested call is checked on its own, and selecting a tool never authorizes the tools it calls.
 Active and ready workflows lock tools and settings; exit and start a new workflow to change the allowlist.
 See [Planning and implementation](../README.md#-planning-and-implementation) for the first-request policy boundary, completion, and same-session versus fresh-session handoff.
 

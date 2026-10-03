@@ -11,11 +11,19 @@ export type PlanModeToolPolicy = "read-only" | "sandboxed" | "user-opt-in" | "bl
 const BLOCKED_BUILTIN_TOOLS = new Set(["edit", "write", "powershell"]);
 const PLAN_OUTPUT_WRITE_TOOLS = new Set(["edit", "write"]);
 
+// Pi ships its eight classic tools (read/bash/edit/write/grep/find/ls/powershell) as core
+// built-ins with the synthetic path `builtin:<name>` (older Pi: no path). Tools from Pi's
+// built-in extensions (mcp, codemode, llama, tool-search) carry the extension's path, e.g.
+// `builtin:mcp`, so they take the annotation path below like any other extension or MCP tool.
 export function isBuiltinTool(tool: ToolInfo) {
-  return tool.sourceInfo.source === "builtin";
+  if (tool.sourceInfo?.source !== "builtin") return false;
+  if (tool.exposure === "model-only") return false;
+  const path = tool.sourceInfo?.path;
+  return !path || path === `builtin:${tool.name}`;
 }
 
 export function classifyPlanModeTool(tool: ToolInfo): PlanModeToolPolicy {
+  if (!tool.sourceInfo?.source) return "blocked";
   if (!isBuiltinTool(tool)) {
     // Extension and MCP tools run in-process, outside the sandbox. Trust their declared
     // read-only hint: a read-only tool cannot destroy anything, so it needs no opt-in.

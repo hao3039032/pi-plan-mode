@@ -1,5 +1,15 @@
 # @narumitw/pi-plan-mode
 
+## 0.60.0 (fork)
+
+### Minor Changes
+
+- Understand Pi 1.0 tool exposure: native MCP and built-in extension tools (source `builtin:mcp` and friends) now take the annotation path instead of being blocked as unknown built-ins, so a declared `readOnlyHint` auto-admits them and everything else becomes explicit opt-in; tools without policy metadata (`sourceInfo.source`) fail closed as blocked.
+- Route tool-call checks by call origin: nested calls (with `parentToolCallId`) follow nested semantics, so registered codemode/deferred tools run through other tools without activation while model-only tools can never be called by other tools; direct and model-only tools still require activation. Codemode/deferred tools can also be selected up front (`filterAvailableSelectedToolNames`) and stay in the frozen policy, so nested calls admit them mid-workflow.
+- Unify tool presentation across the launch menu and Settings with `planModeToolSelection` (labels like `X — inactive in Pi` / `X — blocked by Plan policy`, exposure notes "callable via other tools" / "model calls only"), sanitize untrusted MCP/extension names and descriptions in both menus with the kit's `sanitizeTerminalText` (bidi/OSC-aware), and give inactive `grep`/`find`/`ls` actionable guidance (`defaultTools` full-list instructions without paths or modifier examples).
+- Update the Plan mode-contract wording for exposure semantics ("extension/MCP tools", nested-call checking); existing sessions keep resolving through the `details.mode`/marker fallback.
+- Docs: new "Enable inactive built-in search tools" section with `defaultTools` JSON examples (full list and Pi 0.99+ `+grep`-style modifiers), MCP opt-in notes, and exposure notes in the tools workflows.
+
 ## 0.59.2 (fork)
 
 ### Patch Changes

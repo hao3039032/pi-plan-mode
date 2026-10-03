@@ -31,7 +31,8 @@ import {
   updatePlanModeSettings,
 } from "./settings.js";
 import { canSelectToolInPlanMode } from "./tool-policy.js";
-import { defaultPlanModeToolNames, toolPolicyLabel } from "./tool-selection.js";
+import { defaultPlanModeToolNames, planModeToolSelection, type PlanModeToolMenuItem, terminalToolName } from "./tool-selection.js";
+import { planModeToolAvailability } from "./tool-availability.js";
 
 interface SettingsMenuState {
   kind: "valid" | "invalid";
@@ -141,7 +142,7 @@ export async function showPlanModeSettings(
                 {
                   id: "defaultPlanTools",
                   label: "Plan policy tools",
-                  description: "Choose active tools or retain names to resolve before the first request.",
+                  description: "Choose available tools or retain names to resolve before the first request.",
                   currentValue: defaultToolsValue(state.settings.defaultPlanTools),
                   action: "open-tools",
                 },
@@ -491,7 +492,11 @@ export async function showPlanModeSettings(
       },
       "toggle-tool": async ({ ctx: actionCtx, state, itemId, selected, signal }) => {
         const tool = itemId ? toolsByItemId.get(itemId) : undefined;
-        if (!tool || !activeToolNames.has(tool.name) || !canSelectToolInPlanMode(tool)) {
+        if (
+          !tool ||
+          planModeToolAvailability(tool, activeToolNames, "selection") !== "available" ||
+          !canSelectToolInPlanMode(tool)
+        ) {
           return { kind: "rejected" };
         }
         const names = explicitToolNames(tools, state.settings.defaultPlanTools);
@@ -639,29 +644,17 @@ function defaultToolItems(
 ) {
   const selected = new Set(explicitToolNames(tools, configured));
   const availableNames = new Set(tools.map((tool) => tool.name));
-  const items = tools.map((tool) => {
-    const active = activeToolNames.has(tool.name);
-    const selectable = active && canSelectToolInPlanMode(tool);
-    const policy = active
-      ? toolPolicyLabel(tool)
-      : selected.has(tool.name)
-        ? "not active yet; retained for first-request resolution"
-        : "not active in this Pi session";
-    const description = tool.description ?? "No description available";
+  const items: (PlanModeToolMenuItem & { id: string; selected: boolean })[] = tools.map((tool) => {
+    const item = planModeToolSelection(tool, activeToolNames, selected.has(tool.name));
     return {
       id: toolItemIds.get(tool.name) as string,
-      label: tool.name,
-      description: `${policy} · ${description}`,
-      searchText: `${policy} ${description}`,
+      name: item.name,
+      label: item.label,
+      description: item.description,
+      searchText: item.searchText,
+      disabled: item.disabled,
+      ...(item.disabledReason !== undefined ? { disabledReason: item.disabledReason } : {}),
       selected: selected.has(tool.name),
-      disabled: !selectable,
-      disabledReason: !active
-        ? selected.has(tool.name)
-          ? "Not active yet; retained and resolved before the first request"
-          : "Not active in Pi; Plan mode will not activate it"
-        : selectable
-          ? undefined
-          : "Blocked by Plan-mode policy",
     };
   });
   for (const [index, name] of (configured ?? []).entries()) {
@@ -669,6 +662,7 @@ function defaultToolItems(
     const label = terminalToolName(name);
     items.push({
       id: `plan-settings-pending:${index}`,
+      name,
       label,
       description: "pending registration · Retained and resolved before the first request",
       searchText: `${label} pending registration retained settings first request`,
@@ -708,19 +702,8 @@ function planSandboxWithout(
   return Object.keys(remaining).length > 0 ? remaining : null;
 }
 
-function terminalToolName(value: string) {
-  const safe = safeTerminalText(value) || "(unnamed tool)";
-  return safe.length > 120 ? `${safe.slice(0, 119)}…` : safe;
-}
-
 function safeTerminalText(value: string) {
-  return [...value]
-    .map((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f) ? " " : character;
-    })
-    .join("")
-    .trim();
+  return sanitizeTerminalText(value).trim();
 }
 
 function formatError(error: unknown) {

@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { defineMenu, runMenu } from "@narumitw/pi-tui-kit";
+import { defineMenu, runMenu, sanitizeTerminalText } from "@narumitw/pi-tui-kit";
 
 export interface PlanLaunchTool {
   name: string;
@@ -39,7 +39,7 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
       main: () => ({
         kind: "actions",
         title: "Plan mode",
-        lines: [options.statusText, options.toolSummary(selectedNames)],
+        lines: [options.statusText, options.toolSummary(selectedNames)].map(sanitizeTerminalText),
         items: [
           { id: "start", label: "Start Plan mode", action: "start" },
           { id: "tools", label: "Choose tools, then start…", to: "tools" },
@@ -54,9 +54,9 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
         lines: [
           "Policy changes apply only when you start Plan mode; first use may also reveal Plan helpers.",
           options.toolSummary(selectedNames),
-          "Active tools can be chosen now; retained names resolve before the first request.",
+          "Available tools can be chosen now; codemode/deferred tools run through other tools without activation, and retained names resolve before the first request.",
           "Plan mode never activates tools, and non-built-ins run at user risk.",
-        ],
+        ].map(sanitizeTerminalText),
         enableSearch: true,
         viewportSize: 10,
         items: toolItems.map(({ id, tool }) => ({
@@ -85,7 +85,7 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
           "Plan mode explores the project inside the Anthropic Sandbox Runtime (srt): any shell command runs freely, while writes and network access stay sandbox-denied except in the plan output directory.",
           "The agent can ask important decision questions, then returns a complete implementation-ready plan that is saved as Markdown under plans/.",
           "File mutation stays blocked until you explicitly choose to implement the completed plan.",
-        ],
+        ].map(sanitizeTerminalText),
         hint: "back",
       }),
     },

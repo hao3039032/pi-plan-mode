@@ -63,7 +63,10 @@ test("explicit tool intent is retained until availability is resolved", () => {
     ),
     [LATE_TOOL, "missing", "write"],
   );
-  assert.deepEqual(filterAvailableSelectedToolNames([LATE_TOOL, "missing", "write", LATE_TOOL], tools), [LATE_TOOL]);
+  assert.deepEqual(
+    filterAvailableSelectedToolNames([LATE_TOOL, "missing", "write", LATE_TOOL], tools, new Set([LATE_TOOL])),
+    [LATE_TOOL],
+  );
   assert.deepEqual(
     Array.from(
       snapshotPlanModeSelectedNames(tools, {

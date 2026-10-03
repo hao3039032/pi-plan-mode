@@ -3,6 +3,7 @@
 [Back to README](../README.md)
 
 - [Default Plan policy tools](#default-plan-policy-tools)
+- [Enable inactive built-in search tools in Pi](#enable-inactive-built-in-search-tools)
 - [Plan reinjection](#plan-reinjection)
 - [Fresh implementation runtime](#fresh-implementation-runtime)
 - [Export destination](#export-destination)
@@ -62,12 +63,35 @@ Unknown, inactive, and Plan-mode-blocked names remain unavailable after that res
 Settings shows unresolved names as pending registration; resetting to automatic removes the entire override.
 Non-built-in names in this global setting are an explicit user-risk opt-in, just like selecting them in the pre-start workflow selector.
 Plan mode does not interpret a selected custom tool's arguments or actions: allowing one trusts the whole effective tool.
+Native MCP tools and tools from Pi's built-in extensions follow the same rule as ordinary extension tools: they are auto-admitted when their `readOnlyHint` annotation marks them non-mutating, and every other one requires an explicit selection like this.
 Pi resolves tools by name, so if an extension overrides a built-in name, the effective extension tool is selected instead.
 An effective active tool named `bash` runs inside the srt OS sandbox regardless of its source metadata; `powershell` is blocked during Plan mode in v1.
 
 A selection accepted through **Choose tools, then start…** or `/plan tools` is stored in that Pi session and takes precedence over `defaultPlanTools` when the session resumes.
 The global setting remains the policy baseline for fresh sessions and sessions without an explicit selection.
 Settings saves immediately, but saved policy names and thinking apply only when a later Plan workflow starts; they never mutate active schemas or a workflow already in progress.
+
+### Enable inactive built-in search tools
+
+On Pi with `defaultTools` support, `grep`, `find`, and `ls` are not active until Pi's settings include them.
+Use a full list that preserves Pi's existing/default tools, then restart Pi:
+
+```json
+{
+  "defaultTools": ["read", "bash", "edit", "write", "grep", "find", "ls"]
+}
+```
+
+On Pi 0.99 or newer only, the modifier form appends to the defaults instead of replacing them:
+
+```json
+{
+  "defaultTools": ["+grep", "+find", "+ls"]
+}
+```
+
+Do not use the modifier form on older releases.
+Registered codemode or deferred tools do not need activation to be selectable: Plan mode can select them up front, and they run through other tools' nested calls.
 
 ### Plan reinjection
 

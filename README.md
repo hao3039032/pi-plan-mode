@@ -15,6 +15,7 @@ Use a Codex-like `/plan` mode to explore a codebase inside an OS sandbox, resolv
 
 - Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`; `/plan doctor` diagnoses the sandbox.
 - Runs every `bash` call inside the srt OS sandbox — no command-text allowlist; blocks mutating tools (built-in `write`/`edit` work only for files inside the plan output directory) and PowerShell (v1 is bash-only) while keeping helper schemas stable.
+- Understands Pi 1.0 tool exposure: native MCP and built-in extension tools are auto-admitted when they declare a read-only hint (or explicit opt-in otherwise), and registered codemode/deferred tools may be selected without activation and then run through other tools; every nested call is checked on its own.
 - Guides the agent through installing srt and its dependencies when the sandbox is unavailable, and stashes the planning prompt for the recovered start.
 - Uses structured questions for important ambiguity and explicit completion for a decision-ready plan.
 - Persists completed plans as Markdown in a `plans/` directory (revision-safe filenames) and renders them in the TUI with a path footer; draft updates echo on the tool result.
@@ -334,6 +335,7 @@ Guaranteed coexistence with Goal requires `@narumitw/pi-goal` `0.53.0` or newer 
 
 - `plan_mode_question` asks up to three structured questions, supports optional answer notes, submits one answer directly, and reviews multiple answers before TUI submission.
 - `plan_mode_complete` records the complete approved Markdown plan and terminates the planning turn when called alone.
+- Other tools follow the Plan policy: the classic built-ins (`read`/`grep`/`find`/`ls` read-only, `bash` sandboxed, `edit`/`write`/`powershell` blocked), while extension and MCP tools are auto-admitted when their `readOnlyHint` annotation marks them non-mutating and require explicit selection otherwise. Codemode/deferred tools can be selected before activation and run through other tools; direct and model-only tools must be active to be called.
 
 ## ⚙️ Settings
 

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, watch } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 import {
   type ExtensionAPI,
   type ExtensionCommandContext,
@@ -10,6 +9,7 @@ import {
   type InputEvent,
   type InputSource,
 } from "@earendil-works/pi-coding-agent";
+import { sanitizeTerminalText } from "@narumitw/pi-tui-kit";
 import { completePlanArguments } from "./command.js";
 import {
   normalizePlanModeCompletion,
@@ -133,7 +133,8 @@ import {
   readCommand,
   readToolPath,
 } from "./tool-policy.js";
-import { compareTools, snapshotPlanModeSelectedNames, toolPolicyLabel } from "./tool-selection.js";
+import { compareTools, filterAvailableSelectedToolNames, planModeToolSelection, snapshotPlanModeSelectedNames, terminalToolName } from "./tool-selection.js";
+import { planModeToolAvailability } from "./tool-availability.js";
 import { WorkflowMutex, type WorkflowMutexOwner } from "./workflow-mutex.js";
 
 const STATE_ENTRY_TYPE = "plan-mode-state";
@@ -761,16 +762,23 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     if (classifyPlanModeTool(calledTool) === "blocked") {
       return {
         block: true,
-        reason: `Plan mode blocks tool '${event.toolName}' because its built-in policy is blocked and settings cannot enable it.`,
+        reason: calledTool.sourceInfo?.source
+          ? `Plan mode blocks tool '${event.toolName}' because its built-in policy is blocked and settings cannot enable it.`
+          : `Plan mode blocks tool '${event.toolName}' because safe policy metadata is unavailable.`,
       };
     }
     const allowedToolNames = new Set(planModePolicyToolNames());
-    if (!activeToolNames.has(event.toolName)) {
+    // Nested calls (codemode scripts, tool-launched sub-calls) are checked on their own, with
+    // their own routing semantics: codemode/deferred tools stay callable without activation.
+    const availability = planModeToolAvailability(
+      calledTool,
+      activeToolNames,
+      event.parentToolCallId ? "nested" : "model",
+    );
+    if (availability !== "available") {
       return {
         block: true,
-        reason: allowedToolNames.has(event.toolName)
-          ? `Plan mode blocks tool '${event.toolName}' because it was admitted to the active Plan workflow but is currently inactive. Reactivate it to continue without restarting.`
-          : `Plan mode blocks tool '${event.toolName}' because it is registered but inactive. Activate it before starting the next Plan workflow.`,
+        reason: planModeAvailabilityBlockReason(availability, event.toolName, allowedToolNames.has(event.toolName)),
       };
     }
     if (
@@ -1544,6 +1552,26 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     trackedPlanCalls.set(toolCallId, { startedAt: Date.now(), ...(target !== undefined ? { target } : {}) });
   }
 
+  /** Block reason for a registered tool whose exposure-aware availability is not "available". */
+  function planModeAvailabilityBlockReason(
+    availability: Exclude<ReturnType<typeof planModeToolAvailability>, "available">,
+    toolName: string,
+    admitted: boolean,
+  ) {
+    if (availability === "inactive") {
+      return admitted
+        ? `Plan mode blocks tool '${toolName}' because it was admitted to the active Plan workflow but is currently inactive. Reactivate it to continue without restarting.`
+        : `Plan mode blocks tool '${toolName}' because it is registered but inactive. Activate it before starting the next Plan workflow.`;
+    }
+    if (availability === "hidden") {
+      return `Plan mode blocks tool '${toolName}' because it is hidden and cannot be called.`;
+    }
+    if (availability === "model-only") {
+      return `Plan mode blocks tool '${toolName}' because it can only be called by the model directly, not by other tools.`;
+    }
+    return `Plan mode blocks tool '${toolName}' because its tool exposure is not supported.`;
+  }
+
   function takeTrackedPlanCall(toolCallId: string) {
     const tracked = trackedPlanCalls.get(toolCallId);
     trackedPlanCalls.delete(toolCallId);
@@ -1990,7 +2018,10 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       toolSummary: (selectedNames) => {
         const allowed = tools
           .filter(
-            (tool) => activeToolNames.has(tool.name) && selectedNames.has(tool.name) && canSelectToolInPlanMode(tool),
+            (tool) =>
+              planModeToolAvailability(tool, activeToolNames, "selection") === "available" &&
+              selectedNames.has(tool.name) &&
+              canSelectToolInPlanMode(tool),
           )
           .map((tool) => tool.name);
         const pending = pendingNames.filter((name) => selectedNames.has(name)).map(terminalToolName);
@@ -2003,30 +2034,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         ].join(" ");
       },
       tools: [
-        ...tools.map((tool) => {
-          const selectable = canSelectToolInPlanMode(tool);
-          const active = activeToolNames.has(tool.name);
-          const retained = retainedInactiveNames.has(tool.name);
-          const policy = active
-            ? toolPolicyLabel(tool)
-            : retained
-              ? "not active yet; retained for first-request resolution"
-              : "not active in this Pi session";
-          const description = tool.description ?? "No description available";
-          return {
-            name: tool.name,
-            description: `${policy} · ${description}`,
-            searchText: [policy, description].join(" "),
-            disabled: !selectable || !active,
-            disabledReason: !active
-              ? retained
-                ? "Not active yet; retained and resolved before the first request"
-                : "Not active in Pi; Plan mode will not activate it"
-              : selectable
-                ? undefined
-                : "Blocked by Plan-mode policy",
-          };
-        }),
+        ...tools.map((tool) =>
+          planModeToolSelection(tool, activeToolNames, retainedInactiveNames.has(tool.name)),
+        ),
         ...pendingNames.map((name) => {
           const label = terminalToolName(name);
           return {
@@ -2047,8 +2057,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       },
       startWithTools: async (names, signal) => {
         if (signal.aborted || !lifecycle.isCurrent()) return;
+        // Codemode/deferred tools may be selected without activation and run through other tools.
         const selectedToolNames = Array.from(
-          new Set(names.filter((name) => activeToolNames.has(name) || retainedInactiveNames.has(name))),
+          new Set([
+            ...filterAvailableSelectedToolNames(names, tools, activeToolNames),
+            ...names.filter((name) => retainedInactiveNames.has(name)),
+          ]),
         );
         await startPlanWorkflow(ctx, { candidate: { selectedToolNames, selectedToolKeys: undefined } });
       },
@@ -2213,12 +2227,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   }
 
   // Harmless tools (sandboxed bash, read-only built-ins/annotations, session tools) never need
-  // explicit selection: admit them on first use even when they became active after the freeze.
+  // explicit selection: admit them on first use even when they became available after the freeze.
   function admitLateActivatedPlanTool(toolName: string, ctx: ExtensionContext) {
     // Explicitly selected tools keep the fork's late-admission behavior.
     if (admitLateActivatedExplicitTool(toolName, ctx)) return true;
     // Harmless tools (sandboxed bash, readers, read-only hinted extensions, session tools)
-    // never need selection and are admitted on first use whenever they are active.
+    // never need selection and are admitted on first use whenever they are available.
     const calledTool = toolByName(toolName);
     if (!calledTool || !isAutoAdmittedPlanTool(calledTool)) return false;
     return admitUnselectedAutoTool(toolName, ctx);
@@ -2247,12 +2261,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   }
 
   function desiredPlanModeToolNames() {
-    const tools = activePlanPolicyTools();
+    const tools = availablePlanPolicyTools();
     return Array.from(snapshotPlanModeSelectedNames(tools, toolSelectionSnapshot()));
   }
 
   function automaticPlanModeToolNames() {
-    return Array.from(snapshotPlanModeSelectedNames(activePlanPolicyTools(), {}));
+    return Array.from(snapshotPlanModeSelectedNames(availablePlanPolicyTools(), {}));
   }
 
   function resolveWorkflowToolPolicy(policy: PlanModeWorkflowToolPolicy) {
@@ -2319,7 +2333,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
   function resolvePlanModePolicyToolNames(desiredNames: readonly string[]) {
     const selectedNames = new Set(desiredNames);
-    return activePlanPolicyTools()
+    return availablePlanPolicyTools()
       .filter((tool) => selectedNames.has(tool.name) && canSelectToolInPlanMode(tool))
       .map((tool) => tool.name);
   }
@@ -2338,9 +2352,11 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       .sort(compareTools);
   }
 
-  function activePlanPolicyTools() {
+  function availablePlanPolicyTools() {
     const activeNames = new Set(safeGetActiveTools());
-    return selectableTools().filter((tool) => activeNames.has(tool.name));
+    return selectableTools().filter(
+      (tool) => planModeToolAvailability(tool, activeNames, "selection") === "available",
+    );
   }
 
   function safeGetAllTools() {
@@ -2768,8 +2784,13 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
   function formatToolSummary() {
     const names = planModePolicyToolNames();
+    const activeNames = new Set(safeGetActiveTools());
     const autoNames = safeGetAllTools()
-      .filter((tool) => isAutoAdmittedPlanTool(tool) && safeGetActiveTools().includes(tool.name))
+      .filter(
+        (tool) =>
+          isAutoAdmittedPlanTool(tool) &&
+          planModeToolAvailability(tool, activeNames, "model") === "available",
+      )
       .map((tool) => tool.name)
       .filter((name) => !names.includes(name));
     const listed = [...names, ...autoNames];
@@ -2781,11 +2802,6 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
   function toolByName(toolName: string) {
     return safeGetAllTools().find((candidate) => candidate.name === toolName);
-  }
-
-  function terminalToolName(value: string) {
-    const safe = safeTerminalText(value) || "(unnamed tool)";
-    return safe.length > 120 ? `${safe.slice(0, 119)}…` : safe;
   }
 
   function terminalModelReference(model: { provider: string; modelId: string }) {
@@ -2800,18 +2816,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   }
 
   function safeTerminalText(value: string) {
-    return [...stripVTControlCharacters(value)]
-      .map((character) => {
-        const codePoint = character.codePointAt(0) ?? 0;
-        return codePoint <= 0x1f ||
-          (codePoint >= 0x7f && codePoint <= 0x9f) ||
-          (codePoint >= 0x202a && codePoint <= 0x202e) ||
-          (codePoint >= 0x2066 && codePoint <= 0x2069)
-          ? " "
-          : character;
-      })
-      .join("")
-      .trim();
+    return sanitizeTerminalText(value).trim();
   }
 }
 
